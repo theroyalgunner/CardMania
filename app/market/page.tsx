@@ -64,10 +64,11 @@ export default function MarketPage() {
 
   const marketSummary = useMemo(() => {
     const value = marketRows.reduce((sum, row) => sum + row.intelligence.fairValue, 0);
+    const cost = marketRows.reduce((sum, row) => sum + Number(row.card.purchasePrice || 0), 0);
     const highConfidence = marketRows.filter((row) => row.intelligence.confidenceLabel === "High").length;
     const rising = marketRows.filter((row) => row.intelligence.trend === "Rising").length;
     const watch = marketRows.filter((row) => row.intelligence.verdict === "Watch").length;
-    return { value, highConfidence, rising, watch };
+    return { value, cost, profit: value - cost, highConfidence, rising, watch };
   }, [marketRows]);
 
   const cardsReadyForMarket = useMemo(
@@ -85,7 +86,7 @@ export default function MarketPage() {
     }
 
     await load();
-    setStatus("Estimated missing or placeholder values and saved updates.");
+    setStatus("Estimated missing or placeholder values using Market Engine V2.");
   }
 
   async function searchCard(card: CollectionCard, saveValue = false) {
@@ -173,10 +174,10 @@ export default function MarketPage() {
 
   return (
     <main className="min-h-screen px-4 pb-28 pt-6">
-      <p className="text-sm text-cm-muted">{source} Market • CardMania V9</p>
+      <p className="text-sm text-cm-muted">{source} Market • CardMania V10 Market Intelligence</p>
       <h1 className="text-3xl font-black">Market Intelligence</h1>
       <p className="mt-1 text-sm text-cm-muted">
-        Live sold-listing analysis with average, median, range, confidence, and value updates.
+        Median-led valuation, live sold comps, outlier filtering, confidence scoring, and profit tracking.
       </p>
 
       {status && (
@@ -187,8 +188,15 @@ export default function MarketPage() {
 
       <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
         <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
-          <p className="text-xs text-cm-muted">Missing Value</p>
-          <p className="mt-1 text-3xl font-black">{missingValues.length}</p>
+          <p className="text-xs text-cm-muted">Market Value</p>
+          <p className="mt-1 text-2xl font-black">{money(marketSummary.value)}</p>
+        </div>
+
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Profit / Loss</p>
+          <p className={marketSummary.profit >= 0 ? "mt-1 text-2xl font-black text-cm-green" : "mt-1 text-2xl font-black text-red-300"}>
+            {marketSummary.profit >= 0 ? "+" : "-"}{money(Math.abs(marketSummary.profit))}
+          </p>
         </div>
 
         <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
@@ -200,17 +208,34 @@ export default function MarketPage() {
           <p className="text-xs text-cm-muted">High Confidence</p>
           <p className="mt-1 text-3xl font-black text-cm-green">{marketSummary.highConfidence}</p>
         </div>
+      </section>
+
+      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Missing Value</p>
+          <p className="mt-1 text-3xl font-black">{missingValues.length}</p>
+        </div>
 
         <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
-          <p className="text-xs text-cm-muted">Rising / Watch</p>
-          <p className="mt-1 text-lg font-black">{marketSummary.rising} / {marketSummary.watch}</p>
+          <p className="text-xs text-cm-muted">Cost Basis</p>
+          <p className="mt-1 text-2xl font-black">{money(marketSummary.cost)}</p>
+        </div>
+
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Rising</p>
+          <p className="mt-1 text-3xl font-black text-cm-green">{marketSummary.rising}</p>
+        </div>
+
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Watch List</p>
+          <p className="mt-1 text-3xl font-black">{marketSummary.watch}</p>
         </div>
       </section>
 
       <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
         <h2 className="text-lg font-black">Live Market Search</h2>
         <p className="mt-1 text-sm text-cm-muted">
-          Search sold listings using any card name or details.
+          Search sold listings using any card name or details. V2 prioritizes median comps and rejected outliers.
         </p>
 
         <input
@@ -232,7 +257,7 @@ export default function MarketPage() {
           <div className="mt-4 rounded-2xl border border-cm-line bg-black/20 p-4">
             <p className="text-xs text-cm-muted">Parsed Market Result</p>
             <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
-              <div><p className="text-xs text-cm-muted">Suggested</p><p className="text-xl font-black">{money(marketResult.suggestedValue || marketResult.medianPrice || marketResult.averagePrice)}</p></div>
+              <div><p className="text-xs text-cm-muted">Market Value</p><p className="text-xl font-black">{money(marketResult.suggestedValue || marketResult.medianPrice || marketResult.averagePrice)}</p></div>
               <div><p className="text-xs text-cm-muted">Average</p><p className="text-xl font-black">{money(marketResult.averagePrice)}</p></div>
               <div><p className="text-xs text-cm-muted">Median</p><p className="text-xl font-black">{money(marketResult.medianPrice)}</p></div>
               <div><p className="text-xs text-cm-muted">Confidence</p><p className="text-xl font-black">{marketResult.confidence || "Low"}</p></div>
@@ -317,6 +342,7 @@ export default function MarketPage() {
                         {intelligence.fairValue - Number(card.purchasePrice || 0) >= 0 ? "+" : "-"}{money(Math.abs(intelligence.fairValue - Number(card.purchasePrice || 0)))}
                       </p>
                       <p className="mt-1 text-[11px] text-cm-muted">{intelligence.valueSource}</p>
+                      <p className="mt-1 text-[11px] text-cm-muted">{profitLabel(card)}</p>
                     </div>
                   </div>
                 </Link>
@@ -349,7 +375,8 @@ export default function MarketPage() {
         <h2 className="text-lg font-black">Live Source Status</h2>
         <ul className="mt-3 space-y-2 text-sm text-cm-muted">
           <li>✅ eBay sold listing search and parsing</li>
-          <li>✅ Average, median, low, high, and confidence score</li>
+          <li>✅ Median-led Market Engine V2 pricing</li>
+          <li>✅ Average, median, low, high, spread, and confidence score</li>
           <li>✅ Raw vs graded value model, trend, liquidity, risk, and investment verdict</li>
           <li>✅ Card value update and local price history</li>
           <li>🔜 130Point confirmed sale prices</li>
