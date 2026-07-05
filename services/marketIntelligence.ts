@@ -53,21 +53,43 @@ function gradeMultiplier(card: Partial<CollectionCard>) {
 }
 
 function premiumSignal(card: Partial<CollectionCard>) {
-  const text = [card.player, card.manufacturer, card.set, card.parallel, card.serialNumber, card.grade, card.notes]
+  const text = [
+    card.player,
+    card.manufacturer,
+    card.set,
+    card.parallel,
+    card.serialNumber,
+    card.grade,
+    card.notes,
+  ]
     .filter(Boolean)
     .join(" ")
     .toLowerCase();
+
   return /rookie|\brc\b|auto|autograph|patch|jersey|relic|superfractor|gold|red|black|orange|ssp|case hit|1\/1/.test(text);
 }
 
 function confidenceFromCard(card: Partial<CollectionCard>, result?: LiveMarketResult | null) {
   if (result?.confidenceScore) return clamp(result.confidenceScore);
-  const fields = [card.player, card.year, card.manufacturer, card.set, card.parallel, card.serialNumber, card.cardNumber, card.grade];
+
+  const fields = [
+    card.player,
+    card.year,
+    card.manufacturer,
+    card.set,
+    card.parallel,
+    card.serialNumber,
+    card.cardNumber,
+    card.grade,
+  ];
+
   let score = fields.filter(Boolean).length * 9;
   if (premiumSignal(card)) score += 12;
   if (Number(card.estimatedValue || 0) > 0) score += 8;
+  if (valuationConfidence(card) === "High") score += 14;
   if (valuationConfidence(card) === "Medium") score += 10;
-  return clamp(score, 12, 78);
+
+  return clamp(score, 12, 82);
 }
 
 function confidenceLabel(score: number): MarketIntelligence["confidenceLabel"] {
@@ -79,9 +101,12 @@ function confidenceLabel(score: number): MarketIntelligence["confidenceLabel"] {
 export function calculateMarketTrend(history: PriceHistoryPoint[] = []): Pick<MarketIntelligence, "trend" | "trendPercent"> {
   const latest = history[0]?.value || 0;
   const previous = history[1]?.value || 0;
+
   if (!latest || !previous) return { trend: "Unknown", trendPercent: 0 };
+
   const trendPercent = previous ? Math.round(((latest - previous) / previous) * 100) : 0;
   const trend: MarketTrend = trendPercent >= 8 ? "Rising" : trendPercent <= -8 ? "Falling" : "Stable";
+
   return { trend, trendPercent };
 }
 
@@ -93,8 +118,14 @@ export function calculateMarketIntelligence(
   const savedValue = Number(card.estimatedValue || 0);
   const liveValue = Number(liveResult?.suggestedValue || liveResult?.medianPrice || liveResult?.averagePrice || 0);
   const offlineValue = estimateCardValue({ ...card, estimatedValue: 0 });
+
   const sourceValue = liveValue || savedValue || offlineValue;
-  const valueSource: MarketIntelligence["valueSource"] = liveValue ? "Live comps" : savedValue ? "Saved value" : "Offline estimate";
+  const valueSource: MarketIntelligence["valueSource"] = liveValue
+    ? "Live comps"
+    : savedValue
+      ? "Saved value"
+      : "Offline estimate";
+
   const gradeMult = gradeMultiplier(card);
   const rawValue = isGraded(card) ? roundMoney(sourceValue / gradeMult) : roundMoney(sourceValue);
   const psa9Value = roundMoney(rawValue * 1.85);
@@ -103,16 +134,34 @@ export function calculateMarketIntelligence(
   const fairValue = roundMoney(sourceValue);
 
   const count = Number(liveResult?.soldCount || history[0]?.soldCount || 0);
-  const spread = liveResult?.highestPrice && liveResult?.lowestPrice && fairValue
-    ? ((Number(liveResult.highestPrice) - Number(liveResult.lowestPrice)) / fairValue) * 100
-    : 0;
-  const confidenceScore = clamp(confidenceFromCard(card, liveResult) + Math.min(20, count * 2) - Math.min(24, spread / 8));
-  const liquidityScore = clamp((count ? Math.min(70, count * 7) : 25) + (fairValue >= 100 ? 10 : 0) + (premiumSignal(card) ? 12 : 0));
+  const spread =
+    liveResult?.highestPrice && liveResult?.lowestPrice && fairValue
+      ? ((Number(liveResult.highestPrice) - Number(liveResult.lowestPrice)) / fairValue) * 100
+      : Number(liveResult?.spreadPercent || 0);
+
+  const confidenceScore = clamp(
+    confidenceFromCard(card, liveResult) +
+      Math.min(22, count * 2.2) -
+      Math.min(26, spread / 8)
+  );
+
+  const liquidityScore = clamp(
+    (count ? Math.min(72, count * 7) : 25) +
+      (fairValue >= 100 ? 10 : 0) +
+      (premiumSignal(card) ? 12 : 0)
+  );
+
   const { trend, trendPercent } = calculateMarketTrend(history);
   const cost = Number(card.purchasePrice || 0);
   const roi = cost ? ((fairValue - cost) / cost) * 100 : 0;
   const run = serialLimit(card);
-  const risk: MarketRisk = confidenceScore < 35 || spread > 140 ? "High" : confidenceScore >= 70 && liquidityScore >= 55 ? "Low" : "Medium";
+
+  const risk: MarketRisk =
+    confidenceScore < 35 || spread > 140
+      ? "High"
+      : confidenceScore >= 70 && liquidityScore >= 55
+        ? "Low"
+        : "Medium";
 
   let verdict: MarketVerdict = "Hold";
   if (confidenceScore < 35 || (!count && valueSource !== "Live comps")) verdict = "Watch";
@@ -126,8 +175,9 @@ export function calculateMarketIntelligence(
   if (count) reasons.push(`${count} comparable sale${count === 1 ? "" : "s"} support the latest market sample.`);
   if (spread > 120) reasons.push("Wide price range means comps are noisy; exact variation matching matters.");
   if (trend !== "Unknown") reasons.push(`Recent saved price trend is ${trend.toLowerCase()} (${trendPercent}%).`);
+  if (cost) reasons.push(`Cost basis is £${cost.toLocaleString()}, giving an estimated ROI of ${Math.round(roi)}%.`);
   if (isGraded(card)) reasons.push("Card is already graded, so graded comps should be prioritized over raw comps.");
-  else reasons.push(`Raw-to-PSA 10 model estimates upside to ${roundMoney(psa10Value).toLocaleString()}.`);
+  else reasons.push(`Raw-to-PSA 10 model estimates upside to £${roundMoney(psa10Value).toLocaleString()}.`);
 
   return {
     fairValue,
@@ -151,7 +201,7 @@ export function calculateMarketIntelligence(
 }
 
 export function marketToneClass(value: MarketTrend | MarketVerdict | MarketRisk | string) {
-  if (["Rising", "Buy", "Low", "High"].includes(value) && value !== "High") return "text-cm-green";
+  if (["Rising", "Buy", "Low"].includes(value)) return "text-cm-green";
   if (["Falling", "Sell", "High"].includes(value)) return "text-red-300";
   if (["Watch", "Medium", "Stable"].includes(value)) return "text-yellow-300";
   return "text-white";
