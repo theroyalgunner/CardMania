@@ -9,6 +9,24 @@ function ebaySearchUrl(query: string) {
   );
 }
 
+function cleanQuery(query: string) {
+  return String(query || "")
+    .replace(/#(\S+)/g, "$1")
+    .replace(/\bPSA\s*10\b/gi, "")
+    .replace(/\bBGS\s*9\.5\b/gi, "")
+    .replace(/\bRaw\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function buildStrictQueries(query: string) {
+  const base = cleanQuery(query);
+  const noSerial = base.replace(/\b\d{1,4}\s*\/\s*\d{1,4}\b/g, "").replace(/\s+/g, " ").trim();
+  const noCardNumber = noSerial.replace(/\b[A-Z]{1,5}-?\d{1,5}\b/gi, "").replace(/\s+/g, " ").trim();
+
+  return Array.from(new Set([base, noSerial, noCardNumber].filter((q) => q.length > 3)));
+}
+
 function normalizeBrowseItems(items: any[] = [], query: string): ParsedSale[] {
   return items
     .map((item) => {
@@ -16,7 +34,8 @@ function normalizeBrowseItems(items: any[] = [], query: string): ParsedSale[] {
       const title = String(item?.title || "eBay sold listing");
       const { score, flags } = scoreComparable(title, query);
       const currencyCode = String(item?.price?.currency || "GBP").toUpperCase();
-      const currency: ParsedSale["currency"] = currencyCode === "USD" ? "USD" : currencyCode === "EUR" ? "EUR" : "GBP";
+      const currency: ParsedSale["currency"] =
+        currencyCode === "USD" ? "USD" : currencyCode === "EUR" ? "EUR" : "GBP";
 
       return {
         title,
@@ -63,9 +82,8 @@ async function fetchEbayHtml(query: string) {
     const response = await fetch(searchUrl, {
       headers: {
         "User-Agent":
-          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126 Safari/537.36 CardMania/1.0",
-        Accept:
-          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/126 Safari/537.36 CardMania/1.0",
+        Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
       },
       next: { revalidate: 300 },
     });
@@ -77,41 +95,80 @@ async function fetchEbayHtml(query: string) {
   }
 }
 
+async function runSearch(query: string) {
+  const apiResult = await fetchEbayBrowseApi(query);
+  const sales = apiResult.sales.length ? apiResult.sales : await fetchEbayHtml(query);
+  const summary = summarizeSales(sales);
+
+  return {
+    query,
+    searchUrl: ebaySearchUrl(query),
+    sourceMode: apiResult.sales.length ? apiResult.mode : "scrape",
+    sales,
+    summary,
+  };
+}
+
 export async function POST(req: Request) {
   try {
     const { query } = await req.json();
 
     if (!query) {
-      return NextResponse.json(
-        { success: false, error: "Missing search query" },
-        { status: 400 }
-      );
+      return NextResponse.json({ success: false, error: "Missing search query" }, { status: 400 });
     }
 
-    const cleanQuery = String(query).replace(/\s+/g, " ").trim();
-    const searchUrl = ebaySearchUrl(cleanQuery);
-    const apiResult = await fetchEbayBrowseApi(cleanQuery);
-    const sales = apiResult.sales.length ? apiResult.sales : await fetchEbayHtml(cleanQuery);
-    const summary = summarizeSales(sales);
+    const queries = buildStrictQueries(query);
+    const attempts = [];
+
+    for (const q of queries) {
+      const attempt = await runSearch(q);
+      attempts.push({
+        query: attempt.query,
+        soldCount: attempt.summary.soldCount,
+        keptCount: attempt.summary.keptCount,
+        rejectedCount: attempt.summary.rejectedCount,
+        confidence: attempt.summary.confidence,
+        suggestedValue: attempt.summary.suggestedValue,
+      });
+
+      if ((attempt.summary.keptCount || 0) >= 2 && attempt.summary.confidence !== "Low") {
+        return NextResponse.json({
+          success: true,
+          version: "Market Engine V4 exact eBay comps",
+          query: attempt.query,
+          searchUrl: attempt.searchUrl,
+          sourceMode: attempt.sourceMode,
+          sales: attempt.sales,
+          attempts,
+          ...attempt.summary,
+          note: `V4 exact comps used: ${attempt.query}. ${attempt.summary.rejectedCount || 0} weak comps filtered out.`,
+        });
+      }
+    }
+
+    const best = attempts
+      .map((a, index) => ({ ...a, index }))
+      .sort((a, b) => (b.keptCount || 0) - (a.keptCount || 0))[0];
+
+    const fallback = await runSearch(queries[best?.index || 0]);
 
     return NextResponse.json({
       success: true,
-      query: cleanQuery,
-      searchUrl,
-      sourceMode: apiResult.sales.length ? apiResult.mode : "scrape",
-      sales,
-      ...summary,
+      version: "Market Engine V4 exact eBay comps",
+      query: fallback.query,
+      searchUrl: fallback.searchUrl,
+      sourceMode: fallback.sourceMode,
+      sales: fallback.sales,
+      attempts,
+      ...fallback.summary,
       note:
-        sales.length > 0
-          ? `Analyzed ${summary.keptCount || summary.soldCount} comparable sold listing${(summary.keptCount || summary.soldCount) === 1 ? "" : "s"}. ${summary.rejectedCount ? `${summary.rejectedCount} weak comp${summary.rejectedCount === 1 ? "" : "s"} filtered out.` : ""}`
-          : "Opened eBay sold search. eBay did not expose parseable sold prices for this request.",
+        fallback.sales.length > 0
+          ? `V4 fallback used best available query: ${fallback.query}. Review comps before trusting value.`
+          : "Opened eBay sold search. No parseable sold prices found.",
     });
   } catch (error: any) {
     return NextResponse.json(
-      {
-        success: false,
-        error: error?.message || "Unable to search eBay.",
-      },
+      { success: false, error: error?.message || "Unable to search eBay." },
       { status: 500 }
     );
   }
