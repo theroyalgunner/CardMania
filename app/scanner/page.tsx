@@ -1,534 +1,388 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { BottomNav } from "@/components/BottomNav";
 import { CollectionCard } from "@/services/collectionStore";
-import { listCards, saveCard } from "@/services/cardRepository";
-import { parseAIResult, confidencePercent } from "@/services/aiTools";
+import { listCards, updateCard } from "@/services/cardRepository";
 import { estimateCardValue, profitLabel } from "@/services/marketEngine";
-import { inferCardFromText, mergeSuggestionIntoForm } from "@/services/cardAutofill";
-import { buildMarketQuery, searchLiveMarket, LiveMarketResult } from "@/services/liveMarket";
-
-type ManualForm = {
-  player: string;
-  team: string;
-  manufacturer: string;
-  set: string;
-  year: string;
-  parallel: string;
-  serialNumber: string;
-  cardNumber: string;
-  grade: string;
-  purchasePrice: string;
-  estimatedValue: string;
-  notes: string;
-};
-
-const blankForm: ManualForm = {
-  player: "",
-  team: "",
-  manufacturer: "",
-  set: "",
-  year: "",
-  parallel: "",
-  serialNumber: "",
-  cardNumber: "",
-  grade: "Raw",
-  purchasePrice: "0",
-  estimatedValue: "0",
-  notes: "",
-};
-
-const formFields: Array<[keyof ManualForm, string, string]> = [
-  ["player", "Player", "Example: Ronaldinho"],
-  ["team", "Team / Club", "Example: Brazil, Real Madrid, Barcelona"],
-  ["manufacturer", "Manufacturer", "Example: Topps, Panini, Futera"],
-  ["set", "Set / Product", "Example: Topps Chrome UEFA"],
-  ["year", "Year", "Example: 2024"],
-  ["parallel", "Parallel", "Example: Gold Refractor /50"],
-  ["serialNumber", "Serial Number", "Example: 07/50"],
-  ["cardNumber", "Card Number", "Example: 118 or UCC-12"],
-  ["grade", "Grade", "Example: Raw, PSA 10, BGS 9.5"],
-];
-
-const quickPresets = [
-  "Ronaldinho Brazil Topps Chrome UEFA Legendary Gold Refractor 07/50",
-  "Jude Bellingham Real Madrid Topps Chrome UEFA 2024 Gold Refractor /50",
-  "Lamine Yamal FC Barcelona Topps Chrome UEFA 2024 Purple Refractor /25 RC",
-  "Lionel Messi Inter Miami Topps Chrome 2024 Refractor",
-  "Cristiano Ronaldo Al Nassr Panini Prizm 2024",
-];
+import { addPriceHistoryPoint, getPriceHistory } from "@/services/priceHistoryStore";
+import { buildMarketQuery, LiveMarketResult, searchLiveMarket } from "@/services/liveMarket";
+import { calculateMarketIntelligence, marketToneClass } from "@/services/marketIntelligence";
 
 function money(value?: number) {
   return `£${Number(value || 0).toLocaleString()}`;
 }
 
-function estimateFromManual(form: ManualForm) {
-  return estimateCardValue({
-    player: form.player,
-    team: form.team,
-    manufacturer: form.manufacturer,
-    set: form.set,
-    year: form.year,
-    parallel: form.parallel,
-    serialNumber: form.serialNumber,
-    cardNumber: form.cardNumber,
-    grade: form.grade,
-    purchasePrice: Number(form.purchasePrice) || 0,
-    estimatedValue: Number(form.estimatedValue) || 0,
-  } as any);
-}
-
-function readFileAsDataUrl(file: File) {
-  return new Promise<string>((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(new Error("Could not read image file."));
-    reader.readAsDataURL(file);
-  });
-}
-
-function duplicateScore(card: CollectionCard, form: ManualForm) {
-  let score = 0;
-  if (card.player && form.player && card.player.toLowerCase() === form.player.toLowerCase()) score += 3;
-  if (card.set && form.set && card.set.toLowerCase() === form.set.toLowerCase()) score += 2;
-  if (card.year && form.year && String(card.year) === String(form.year)) score += 1;
-  if (card.cardNumber && form.cardNumber && card.cardNumber.toLowerCase() === form.cardNumber.toLowerCase()) score += 3;
-  if (card.serialNumber && form.serialNumber && card.serialNumber === form.serialNumber) score += 4;
-  if (card.parallel && form.parallel && card.parallel.toLowerCase() === form.parallel.toLowerCase()) score += 2;
-  return score;
-}
-
-export default function ScannerPage() {
-  const router = useRouter();
-  const [image, setImage] = useState<string | null>(null);
-  const [backImage, setBackImage] = useState<string | null>(null);
-  const [mimeType, setMimeType] = useState("image/jpeg");
-  const [backMimeType, setBackMimeType] = useState("image/jpeg");
-  const [fileName, setFileName] = useState("");
-  const [visibleText, setVisibleText] = useState("");
-  const [result, setResult] = useState<any>(null);
+export default function MarketPage() {
+  const [cards, setCards] = useState<CollectionCard[]>([]);
+  const [status, setStatus] = useState("");
+  const [source, setSource] = useState("Loading");
+  const [searchingId, setSearchingId] = useState<string | null>(null);
+  const [manualQuery, setManualQuery] = useState("");
   const [marketResult, setMarketResult] = useState<LiveMarketResult | null>(null);
-  const [marketLoading, setMarketLoading] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [message, setMessage] = useState("");
-  const [duplicateWarning, setDuplicateWarning] = useState("");
-  const [manual, setManual] = useState<ManualForm>(blankForm);
 
-  const ai = useMemo(() => parseAIResult(result), [result]);
-  const resultText = JSON.stringify(result || {}).toLowerCase();
-  const providerLabel = result?.provider ? String(result.provider).toUpperCase() : result?.mode ? String(result.mode).toUpperCase() : "READY";
-  const quality = ai?.quality;
-  const featureLabels = [
-    ai?.features?.rookie && "RC",
-    ai?.features?.autograph && "Auto",
-    ai?.features?.patch && "Patch",
-    ai?.features?.jersey && "Jersey",
-    ai?.features?.relic && "Relic",
-    ai?.features?.numbered && "Numbered",
-    ai?.features?.oneOfOne && "1/1",
-    ai?.features?.parallel && "Parallel",
-  ].filter(Boolean) as string[];
-
-  const isQuotaError =
-    resultText.includes("quota") ||
-    resultText.includes("429") ||
-    resultText.includes("rate");
-
-  const hasResult = Boolean(result);
-
-  async function onFile(file: File | undefined, side: "front" | "back") {
-    if (!file) return;
-
-    const dataUrl = await readFileAsDataUrl(file);
-
-    if (side === "front") {
-      setImage(dataUrl);
-      setMimeType(file.type || "image/jpeg");
-      setFileName(file.name || "");
-    } else {
-      setBackImage(dataUrl);
-      setBackMimeType(file.type || "image/jpeg");
-    }
-
-    setResult(null);
-    setMarketResult(null);
-    setDuplicateWarning("");
-    setManual((current) => ({ ...current, ...blankForm, grade: current.grade || "Raw" }));
-    setVisibleText((current) => current || file.name || "");
-    setMessage(side === "front" ? "Front image loaded. Add the back image if you have it, then scan." : "Back image loaded. Scanner V3 will use both sides.");
-  }
-
-  function applySuggestionFromText(text: string) {
-    const suggestion = inferCardFromText(text);
-
-    setManual((current) => {
-      const merged = mergeSuggestionIntoForm(current, suggestion as any) as ManualForm;
-      const estimated = estimateFromManual(merged);
-
-      return {
-        ...merged,
-        estimatedValue: merged.estimatedValue === "0" ? String(estimated || 0) : merged.estimatedValue,
-      };
-    });
-
-    setMessage(suggestion.reason || "Smart Fill applied.");
-  }
-
-  async function checkDuplicate(next: ManualForm) {
+  async function load() {
     const result = await listCards();
-    const cards = result.data || [];
-    const duplicate = cards
-      .map((card) => ({ card, score: duplicateScore(card, next) }))
-      .filter((item) => item.score >= 6)
-      .sort((a, b) => b.score - a.score)[0];
+    setCards(result.data || []);
+    setSource(result.source === "cloud" ? "Cloud" : "Local");
 
-    if (duplicate) {
-      setDuplicateWarning(
-        `Possible duplicate: ${duplicate.card.player || "Unknown Player"} • ${duplicate.card.set || "Unknown Set"}${duplicate.card.serialNumber ? ` • ${duplicate.card.serialNumber}` : ""}`
-      );
-    } else {
-      setDuplicateWarning("");
+    if (!result.ok) {
+      setStatus(result.message || "Could not load cards.");
     }
   }
 
-  async function scan() {
-    setLoading(true);
-    setResult(null);
-    setMarketResult(null);
-    setMessage("");
-    setDuplicateWarning("");
+  useEffect(() => {
+    load();
+  }, []);
 
-    try {
-      const res = await fetch("/api/scanner", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image, backImage, mimeType, backMimeType, visibleText: `${fileName} ${visibleText}` }),
-      });
+  const missingValues = useMemo(
+    () => cards.filter((card) => !Number(card.estimatedValue || 0)),
+    [cards]
+  );
 
-      const data = await res.json();
-      const parsed = parseAIResult(data);
-      const backupSuggestion = inferCardFromText(`${fileName} ${visibleText}`);
+  const marketRows = useMemo(
+    () =>
+      cards.map((card) => ({
+        card,
+        intelligence: calculateMarketIntelligence(card, getPriceHistory(card.id)),
+      })),
+    [cards]
+  );
 
-      const mergedSuggestion = {
-        ...backupSuggestion,
-        ...parsed,
-        year: String(parsed?.year || backupSuggestion?.year || ""),
-        set: parsed?.set || parsed?.product || backupSuggestion?.set || "",
-      };
+  const topProfits = useMemo(
+    () =>
+      [...marketRows]
+        .sort(
+          (a, b) =>
+            b.intelligence.fairValue - Number(b.card.purchasePrice || 0) -
+            (a.intelligence.fairValue - Number(a.card.purchasePrice || 0))
+        )
+        .slice(0, 8),
+    [marketRows]
+  );
 
-      const next = mergeSuggestionIntoForm(blankForm, mergedSuggestion as any) as ManualForm;
-      const suggestedValue = estimateFromManual(next);
+  const marketSummary = useMemo(() => {
+    const value = marketRows.reduce((sum, row) => sum + row.intelligence.fairValue, 0);
+    const cost = marketRows.reduce((sum, row) => sum + Number(row.card.purchasePrice || 0), 0);
+    const highConfidence = marketRows.filter((row) => row.intelligence.confidenceLabel === "High").length;
+    const rising = marketRows.filter((row) => row.intelligence.trend === "Rising").length;
+    const watch = marketRows.filter((row) => row.intelligence.verdict === "Watch").length;
+    return { value, cost, profit: value - cost, highConfidence, rising, watch };
+  }, [marketRows]);
 
-      const finalForm = {
-        ...next,
-        purchasePrice: "0",
-        estimatedValue: String(suggestedValue || 0),
-        notes:
-          [parsed?.notes, backupSuggestion.notes, data?.message, backupSuggestion.reason, "Saved from CardMania AI Scanner V3"]
-            .filter(Boolean)
-            .join("\n") || "Saved from CardMania AI Scanner V3",
-      };
+  const cardsReadyForMarket = useMemo(
+    () => cards.filter((card) => buildMarketQuery(card).length > 3),
+    [cards]
+  );
 
-      setResult(data);
-      setManual(finalForm);
-      await checkDuplicate(finalForm);
-
-      const marketQuery = parsed?.searchQuery || buildMarketQuery(finalForm as any);
-      if (marketQuery) {
-        setMarketLoading(true);
-        try {
-          const live = await searchLiveMarket(marketQuery);
-          setMarketResult(live);
-          if (live?.success && live.suggestedValue && live.suggestedValue > 0) {
-            setManual((current) => ({
-              ...current,
-              estimatedValue: String(live.suggestedValue),
-              notes: [current.notes, `Market Intelligence V2: ${money(live.suggestedValue)} from ${live.keptCount || live.soldCount || 0} comparable sales.`]
-                .filter(Boolean)
-                .join("\n"),
-            }));
-          }
-        } finally {
-          setMarketLoading(false);
-        }
+  async function estimateAll() {
+    for (const card of cards) {
+      if (!Number(card.estimatedValue || 0) || Number(card.estimatedValue || 0) === 10) {
+        await updateCard(card.id, {
+          estimatedValue: estimateCardValue(card),
+        });
       }
-
-      if (data?.mode === "manual-required" || data?.quota) {
-        setMessage("AI was limited. Smart Fill used visible text/file clues where possible.");
-      } else {
-        setMessage("Scanner V3 completed: recognition, duplicate check, and market valuation finished.");
-      }
-    } catch (error: any) {
-      const suggestion = inferCardFromText(`${fileName} ${visibleText}`);
-      const next = mergeSuggestionIntoForm(blankForm, suggestion as any) as ManualForm;
-
-      setResult({ mode: "scanner-error", message: error?.message || "Scanner request failed." });
-      setManual({ ...next, notes: suggestion.reason || "Scanner failed. Fill the card manually." });
-      setMessage("Scanner request failed. Smart Fill is still available below.");
-    } finally {
-      setLoading(false);
     }
+
+    await load();
+    setStatus("Estimated missing or placeholder values using Market Engine V2.");
   }
 
-  function updateManual(key: keyof ManualForm, value: string) {
-    setManual((current) => {
-      const next = { ...current, [key]: value };
-      checkDuplicate(next);
-      return next;
-    });
-  }
+  async function searchCard(card: CollectionCard, saveValue = false) {
+    const query = buildMarketQuery(card);
 
-  function autoEstimate() {
-    const value = estimateFromManual(manual);
-    updateManual("estimatedValue", String(value));
-  }
-
-  async function saveToCollection() {
-    setSaving(true);
-    setMessage("");
-
-    const card: CollectionCard = {
-      id: crypto.randomUUID(),
-      image: image || undefined,
-      backImage: backImage || undefined,
-      player: manual.player || ai?.player || "Unknown Player",
-      team: manual.team || ai?.team || "Unknown Team",
-      manufacturer: manual.manufacturer || ai?.manufacturer || "Unknown",
-      set: manual.set || ai?.set || ai?.product || "Unknown Set",
-      year: manual.year || String(ai?.year || ""),
-      parallel: manual.parallel || ai?.parallel || "",
-      serialNumber: manual.serialNumber || ai?.serialNumber || "",
-      cardNumber: manual.cardNumber || ai?.cardNumber || "",
-      grade: manual.grade || ai?.grade || "Raw",
-      notes: manual.notes || ai?.notes || "Saved from AI Scanner V3",
-      purchasePrice: Number(manual.purchasePrice) || 0,
-      estimatedValue: Number(manual.estimatedValue) || 0,
-      confidence: ai?.confidence,
-      source: "scanner",
-      createdAt: new Date().toISOString(),
-    } as CollectionCard;
-
-    const saveResult = await saveCard(card);
-    setSaving(false);
-
-    if (!saveResult.ok) {
-      setMessage(saveResult.message || "Could not save card.");
+    if (!query) {
+      setStatus("This card does not have enough details to search.");
       return;
     }
 
-    setMessage(saveResult.message || "Saved.");
-    router.push(`/card/${card.id}`);
+    setSearchingId(card.id);
+    setStatus("");
+
+    const result = await searchLiveMarket(query);
+    setMarketResult(result);
+    setSearchingId(null);
+
+    if (!result.success) {
+      setStatus(result.error || "Could not search live market.");
+      return;
+    }
+
+    const suggestedValue = Number(result.suggestedValue || result.medianPrice || result.averagePrice || 0);
+
+    if (saveValue && suggestedValue > 0) {
+      await updateCard(card.id, { estimatedValue: suggestedValue });
+      addPriceHistoryPoint(card.id, result);
+      await load();
+      setStatus(`Updated ${card.player || "card"} to ${money(suggestedValue)} from live market.`);
+      return;
+    }
+
+    if (result.searchUrl) window.open(result.searchUrl, "_blank");
+    setStatus(result.note || `Opened live eBay sold search for: ${query}`);
   }
 
-  const previewCard = {
-    purchasePrice: Number(manual.purchasePrice) || 0,
-    estimatedValue: Number(manual.estimatedValue) || 0,
-  };
+  async function refreshAllMarketValues() {
+    const targets = cardsReadyForMarket.slice(0, 10);
+
+    if (!targets.length) {
+      setStatus("No cards have enough searchable details yet.");
+      return;
+    }
+
+    setSearchingId("all");
+    let updated = 0;
+
+    for (const card of targets) {
+      const result = await searchLiveMarket(buildMarketQuery(card));
+      const suggestedValue = Number(result.suggestedValue || result.medianPrice || result.averagePrice || 0);
+
+      if (result.success && suggestedValue > 0) {
+        await updateCard(card.id, { estimatedValue: suggestedValue });
+        addPriceHistoryPoint(card.id, result);
+        updated += 1;
+      }
+    }
+
+    setSearchingId(null);
+    await load();
+    setStatus(`Live market refresh complete. Updated ${updated} of ${targets.length} searchable cards.`);
+  }
+
+  async function searchManual() {
+    if (!manualQuery.trim()) {
+      setStatus("Enter a card name or search query first.");
+      return;
+    }
+
+    setSearchingId("manual");
+    setStatus("");
+
+    const result = await searchLiveMarket(manualQuery);
+    setMarketResult(result);
+    setSearchingId(null);
+
+    if (!result.success || !result.searchUrl) {
+      setStatus(result.error || "Could not open live eBay search.");
+      return;
+    }
+
+    window.open(result.searchUrl, "_blank");
+    setStatus(result.note || `Opened live eBay sold search for: ${manualQuery}`);
+  }
 
   return (
     <main className="min-h-screen px-4 pb-28 pt-6">
-      <div className="mb-5">
-        <p className="text-sm text-cm-muted">CardMania Scanner • V10 AI Scanner V3</p>
-        <h1 className="text-3xl font-black">Scanner Intelligence</h1>
-        <p className="mt-1 text-sm text-cm-muted">Scan → recognize → check duplicates → price from Market Intelligence V2 → save to portfolio.</p>
-      </div>
+      <p className="text-sm text-cm-muted">{source} Market • CardMania V10 Market Intelligence</p>
+      <h1 className="text-3xl font-black">Market Intelligence</h1>
+      <p className="mt-1 text-sm text-cm-muted">
+        Median-led valuation, live sold comps, outlier filtering, confidence scoring, and profit tracking.
+      </p>
 
-      <div className="rounded-[28px] border border-cm-line bg-cm-surface p-5">
-        <label className="block">
-          <span className="mb-2 block text-sm font-bold">Front Image</span>
-          <input type="file" accept="image/*" onChange={(e) => onFile(e.target.files?.[0], "front")} className="w-full rounded-2xl border border-cm-line bg-black/30 p-3" />
-        </label>
+      {status && (
+        <div className="mt-5 rounded-[22px] border border-cm-line bg-cm-surface p-4 text-sm text-cm-green">
+          {status}
+        </div>
+      )}
 
-        {image && <img src={image} alt="front preview" className="mt-4 max-h-80 w-full rounded-2xl bg-black/30 object-contain" />}
-
-        <label className="mt-4 block">
-          <span className="mb-2 block text-sm font-bold">Back Image Optional</span>
-          <input type="file" accept="image/*" onChange={(e) => onFile(e.target.files?.[0], "back")} className="w-full rounded-2xl border border-cm-line bg-black/30 p-3" />
-        </label>
-
-        {backImage && <img src={backImage} alt="back preview" className="mt-4 max-h-80 w-full rounded-2xl bg-black/30 object-contain" />}
-
-        <button onClick={scan} disabled={(!image && !backImage) || loading} className="mt-4 w-full rounded-2xl bg-cm-purple py-3 font-black disabled:opacity-50">
-          {loading ? "Scanning and pricing..." : "Scan + Price Card"}
-        </button>
-      </div>
-
-      <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
-        <h2 className="text-lg font-black">Smart Fill Text</h2>
-        <p className="mt-1 text-sm text-cm-muted">Paste visible front/back text, seller title, or auction listing title.</p>
-
-        <textarea value={visibleText} onChange={(e) => setVisibleText(e.target.value)} placeholder="Example: Ronaldinho Brazil Topps Chrome Legendary Gold Refractor 07/50 card #118" className="mt-3 min-h-24 w-full rounded-2xl border border-cm-line bg-black/30 p-3 outline-none" />
-
-        <div className="mt-3 grid gap-2 md:grid-cols-2">
-          {quickPresets.map((preset) => (
-            <button key={preset} onClick={() => { setVisibleText(preset); applySuggestionFromText(preset); }} className="rounded-2xl border border-cm-line bg-white/10 px-3 py-2 text-left text-sm font-bold">
-              {preset}
-            </button>
-          ))}
+      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Market Value</p>
+          <p className="mt-1 text-2xl font-black">{money(marketSummary.value)}</p>
         </div>
 
-        <button onClick={() => applySuggestionFromText(visibleText)} className="mt-3 w-full rounded-2xl border border-cm-line bg-white/10 py-3 font-black">
-          Smart Fill From Text
-        </button>
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Profit / Loss</p>
+          <p className={marketSummary.profit >= 0 ? "mt-1 text-2xl font-black text-cm-green" : "mt-1 text-2xl font-black text-red-300"}>
+            {marketSummary.profit >= 0 ? "+" : "-"}{money(Math.abs(marketSummary.profit))}
+          </p>
+        </div>
+
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Searchable Cards</p>
+          <p className="mt-1 text-3xl font-black">{cardsReadyForMarket.length}</p>
+        </div>
+
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">High Confidence</p>
+          <p className="mt-1 text-3xl font-black text-cm-green">{marketSummary.highConfidence}</p>
+        </div>
       </section>
 
-      {(hasResult || image || backImage) && (
-        <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
-          {hasResult && isQuotaError ? (
-            <div className="rounded-[22px] border border-yellow-500/30 bg-yellow-500/10 p-4">
-              <div className="flex items-center justify-between gap-3">
-                <h2 className="font-black text-yellow-300">AI quota reached</h2>
-                <span className="rounded-full border border-yellow-500/30 px-3 py-1 text-xs font-black text-yellow-200">{providerLabel}</span>
-              </div>
-              <p className="mt-1 text-sm text-cm-muted">Fill the fields below and save manually. Smart Fill can still help with visible text.</p>
-            </div>
-          ) : hasResult ? (
-            <div className="rounded-[22px] border border-green-500/30 bg-green-500/10 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h2 className="text-xl font-black">{manual.player || "Scan Result"}</h2>
-                  <p className="mt-1 text-sm text-cm-muted">{manual.team || "Unknown Team"} • Confidence {confidencePercent(ai?.confidence)}</p>
-                </div>
-                <span className="shrink-0 rounded-full border border-green-500/30 px-3 py-1 text-xs font-black text-green-200">{providerLabel}</span>
-              </div>
+      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Missing Value</p>
+          <p className="mt-1 text-3xl font-black">{missingValues.length}</p>
+        </div>
 
-              {quality && (
-                <div className="mt-4 grid gap-3 md:grid-cols-3">
-                  <div className="rounded-2xl border border-cm-line bg-black/20 p-3">
-                    <p className="text-xs text-cm-muted">Scan Quality</p>
-                    <p className="mt-1 text-lg font-black">{quality.label || "Review"}</p>
-                    <p className="text-xs text-cm-muted">Score {quality.score ?? "—"}/100</p>
-                  </div>
-                  <div className="rounded-2xl border border-cm-line bg-black/20 p-3 md:col-span-2">
-                    <p className="text-xs text-cm-muted">Detected Features</p>
-                    <div className="mt-2 flex flex-wrap gap-2">
-                      {featureLabels.length ? featureLabels.map((label) => (
-                        <span key={label} className="rounded-full bg-white/10 px-3 py-1 text-xs font-bold">{label}</span>
-                      )) : <span className="text-sm text-cm-muted">No special feature detected yet.</span>}
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Cost Basis</p>
+          <p className="mt-1 text-2xl font-black">{money(marketSummary.cost)}</p>
+        </div>
+
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Rising</p>
+          <p className="mt-1 text-3xl font-black text-cm-green">{marketSummary.rising}</p>
+        </div>
+
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Watch List</p>
+          <p className="mt-1 text-3xl font-black">{marketSummary.watch}</p>
+        </div>
+      </section>
+
+      <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
+        <h2 className="text-lg font-black">Live Market Search</h2>
+        <p className="mt-1 text-sm text-cm-muted">
+          Search sold listings using any card name or details. V2 prioritizes median comps and rejected outliers.
+        </p>
+
+        <input
+          value={manualQuery}
+          onChange={(e) => setManualQuery(e.target.value)}
+          placeholder="Example: Ronaldinho Topps Chrome Legendary Refractor"
+          className="mt-3 w-full rounded-2xl border border-cm-line bg-black/30 p-3 outline-none"
+        />
+
+        <button
+          onClick={searchManual}
+          disabled={searchingId === "manual"}
+          className="mt-3 w-full rounded-2xl bg-blue-600 py-3 font-black text-white disabled:opacity-50"
+        >
+          {searchingId === "manual" ? "Checking..." : "Analyze Sold Listings"}
+        </button>
+
+        {marketResult && (
+          <div className="mt-4 rounded-2xl border border-cm-line bg-black/20 p-4">
+            <p className="text-xs text-cm-muted">Parsed Market Result</p>
+            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+              <div><p className="text-xs text-cm-muted">Market Value</p><p className="text-xl font-black">{money(marketResult.suggestedValue || marketResult.medianPrice || marketResult.averagePrice)}</p></div>
+              <div><p className="text-xs text-cm-muted">Average</p><p className="text-xl font-black">{money(marketResult.averagePrice)}</p></div>
+              <div><p className="text-xs text-cm-muted">Median</p><p className="text-xl font-black">{money(marketResult.medianPrice)}</p></div>
+              <div><p className="text-xs text-cm-muted">Confidence</p><p className="text-xl font-black">{marketResult.confidence || "Low"}</p></div>
+            </div>
+            <p className="mt-3 text-sm text-cm-muted">
+              {marketResult.soldCount || 0} comps • Range {money(marketResult.lowestPrice)} – {money(marketResult.highestPrice)} • Spread {marketResult.spreadPercent || 0}%
+            </p>
+            <p className="mt-1 text-xs text-cm-muted">
+              Source: {marketResult.sourceMode === "api" ? "eBay API" : "eBay sold-search fallback"} • Kept {marketResult.keptCount || marketResult.soldCount || 0} / Rejected {marketResult.rejectedCount || 0}
+            </p>
+            {marketResult.note && <p className="mt-1 text-xs text-cm-muted">{marketResult.note}</p>}
+
+            {!!marketResult.sales?.length && (
+              <div className="mt-4 space-y-2">
+                <p className="text-xs font-black uppercase tracking-wide text-cm-muted">Top comparable sales</p>
+                {marketResult.sales.slice(0, 5).map((sale, index) => (
+                  <a
+                    key={`${sale.title}-${sale.price}-${index}`}
+                    href={sale.url || marketResult.searchUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="block rounded-2xl border border-cm-line bg-black/20 p-3"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="line-clamp-2 text-sm font-bold">{sale.title}</p>
+                        <p className="mt-1 text-xs text-cm-muted">
+                          Match {sale.score || 0}% {sale.flags?.length ? `• ${sale.flags.join(" • ")}` : ""}
+                        </p>
+                      </div>
+                      <p className="shrink-0 text-sm font-black">{money(sale.price)}</p>
+                    </div>
+                  </a>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
+
+      <div className="mt-5 grid gap-3 md:grid-cols-2">
+        <button
+          onClick={estimateAll}
+          className="w-full rounded-2xl bg-cm-purple py-3 font-black"
+        >
+          Estimate Missing Values
+        </button>
+
+        <button
+          onClick={refreshAllMarketValues}
+          disabled={searchingId === "all"}
+          className="w-full rounded-2xl bg-green-600 py-3 font-black disabled:opacity-50"
+        >
+          {searchingId === "all" ? "Refreshing..." : "Refresh Top 10 Live Values"}
+        </button>
+      </div>
+
+      <section className="mt-6">
+        <h2 className="mb-3 text-lg font-black">Top Profit Cards</h2>
+
+        {topProfits.length ? (
+          <div className="space-y-3">
+            {topProfits.map(({ card, intelligence }) => (
+              <div key={card.id} className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+                <Link href={`/card/${card.id}`} className="block">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-black">{card.player || "Unknown Player"}</h3>
+                      <p className="text-sm text-cm-muted">{card.set || "Unknown Set"}</p>
+                      <p className="mt-1 text-xs text-cm-muted">{buildMarketQuery(card) || "No searchable details yet"}</p>
+                      <div className="mt-3 grid grid-cols-2 gap-2 text-xs md:grid-cols-4">
+                        <span className="rounded-xl bg-black/20 p-2">Confidence <b className={marketToneClass(intelligence.confidenceLabel)}>{intelligence.confidenceScore}</b></span>
+                        <span className="rounded-xl bg-black/20 p-2">Trend <b className={marketToneClass(intelligence.trend)}>{intelligence.trend}</b></span>
+                        <span className="rounded-xl bg-black/20 p-2">Verdict <b className={marketToneClass(intelligence.verdict)}>{intelligence.verdict}</b></span>
+                        <span className="rounded-xl bg-black/20 p-2">Raw/PSA10 <b>{money(intelligence.rawValue)} / {money(intelligence.psa10Value)}</b></span>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <p className="font-black">{money(intelligence.fairValue)}</p>
+                      <p className={intelligence.fairValue - Number(card.purchasePrice || 0) >= 0 ? "text-xs text-cm-green" : "text-xs text-red-300"}>
+                        {intelligence.fairValue - Number(card.purchasePrice || 0) >= 0 ? "+" : "-"}{money(Math.abs(intelligence.fairValue - Number(card.purchasePrice || 0)))}
+                      </p>
+                      <p className="mt-1 text-[11px] text-cm-muted">{intelligence.valueSource}</p>
+                      <p className="mt-1 text-[11px] text-cm-muted">{profitLabel(card)}</p>
                     </div>
                   </div>
-                </div>
-              )}
+                </Link>
 
-              {quality?.warnings?.length ? (
-                <div className="mt-3 rounded-2xl border border-yellow-500/20 bg-yellow-500/10 p-3 text-sm text-yellow-100">
-                  {quality.warnings.join(" • ")}
+                <div className="mt-3 grid grid-cols-2 gap-2">
+                  <button
+                    onClick={() => searchCard(card, false)}
+                    disabled={searchingId === card.id}
+                    className="rounded-2xl bg-blue-600 py-2 text-sm font-black text-white disabled:opacity-50"
+                  >
+                    Analyze
+                  </button>
+                  <button
+                    onClick={() => searchCard(card, true)}
+                    disabled={searchingId === card.id}
+                    className="rounded-2xl bg-green-600 py-2 text-sm font-black text-white disabled:opacity-50"
+                  >
+                    Update Value
+                  </button>
                 </div>
-              ) : null}
-            </div>
-          ) : (
-            <div className="rounded-[22px] border border-cm-line bg-black/20 p-4">
-              <h2 className="font-black">Manual Entry Ready</h2>
-              <p className="mt-1 text-sm text-cm-muted">Use Scan Card, Smart Fill, or type the fields yourself.</p>
-            </div>
-          )}
-
-          {duplicateWarning && (
-            <div className="mt-4 rounded-[22px] border border-orange-500/30 bg-orange-500/10 p-4 text-sm text-orange-200">
-              {duplicateWarning}
-            </div>
-          )}
-
-          {(marketLoading || marketResult) && (
-            <div className="mt-4 rounded-[22px] border border-cm-line bg-black/20 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <h3 className="font-black">Live Market Check</h3>
-                  <p className="mt-1 text-sm text-cm-muted">
-                    {marketLoading ? "Searching recent sold comps..." : marketResult?.note || marketResult?.error || "Market search complete."}
-                  </p>
-                </div>
-                {marketResult?.confidence && (
-                  <span className="rounded-full border border-cm-line px-3 py-1 text-xs font-black">{marketResult.confidence}</span>
-                )}
               </div>
-
-              {marketResult?.success && (
-                <div className="mt-4 grid gap-3 md:grid-cols-4">
-                  <div className="rounded-2xl border border-cm-line bg-white/5 p-3">
-                    <p className="text-xs text-cm-muted">Market Value</p>
-                    <p className="text-lg font-black">{money(marketResult.suggestedValue || 0)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-cm-line bg-white/5 p-3">
-                    <p className="text-xs text-cm-muted">Median</p>
-                    <p className="text-lg font-black">{money(marketResult.medianPrice || 0)}</p>
-                  </div>
-                  <div className="rounded-2xl border border-cm-line bg-white/5 p-3">
-                    <p className="text-xs text-cm-muted">Sold Comps</p>
-                    <p className="text-lg font-black">{marketResult.keptCount || marketResult.soldCount || 0}</p>
-                  </div>
-                  <div className="rounded-2xl border border-cm-line bg-white/5 p-3">
-                    <p className="text-xs text-cm-muted">Range</p>
-                    <p className="text-lg font-black">{money(marketResult.lowestPrice)}–{money(marketResult.highestPrice)}</p>
-                  </div>
-                </div>
-              )}
-
-              {marketResult?.sales?.length ? (
-                <div className="mt-4 grid gap-2">
-                  {marketResult.sales.slice(0, 3).map((sale, index) => (
-                    <a key={`${sale.title}-${index}`} href={sale.url || marketResult.searchUrl} target="_blank" rel="noreferrer" className="rounded-2xl border border-cm-line bg-white/5 p-3 text-sm hover:bg-white/10">
-                      <div className="flex items-start justify-between gap-3">
-                        <span className="line-clamp-2 font-bold">{sale.title}</span>
-                        <span className="shrink-0 font-black">{money(sale.price)}</span>
-                      </div>
-                      {sale.flags?.length ? <p className="mt-1 text-xs text-cm-muted">{sale.flags.join(" • ")}</p> : null}
-                    </a>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-          )}
-
-          <div className="mt-4 grid gap-3">
-            {formFields.map(([key, label, placeholder]) => (
-              <label key={key} className="block">
-                <span className="mb-1 block text-sm font-bold">{label}</span>
-                <input value={manual[key]} onChange={(e) => updateManual(key, e.target.value)} placeholder={placeholder} className="w-full rounded-2xl border border-cm-line bg-black/30 p-3 outline-none" />
-              </label>
             ))}
-
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold">Purchase Price (£)</span>
-                <input type="number" min="0" step="0.01" value={manual.purchasePrice} onChange={(e) => updateManual("purchasePrice", e.target.value)} className="w-full rounded-2xl border border-cm-line bg-black/30 p-3 outline-none" />
-              </label>
-
-              <label className="block">
-                <span className="mb-1 block text-sm font-bold">Estimated Value (£)</span>
-                <input type="number" min="0" step="0.01" value={manual.estimatedValue} onChange={(e) => updateManual("estimatedValue", e.target.value)} className="w-full rounded-2xl border border-cm-line bg-black/30 p-3 outline-none" />
-              </label>
-            </div>
-
-            <button onClick={autoEstimate} className="rounded-2xl border border-cm-line bg-white/10 py-3 font-black">Auto Estimate Value</button>
-
-            {quality?.missingFields?.length ? (
-              <div className="rounded-2xl border border-orange-500/30 bg-orange-500/10 p-3 text-sm text-orange-100">
-                Review needed: {quality.missingFields.join(", ")}
-              </div>
-            ) : null}
-
-            <label className="block">
-              <span className="mb-1 block text-sm font-bold">Notes</span>
-              <textarea value={manual.notes} onChange={(e) => updateManual("notes", e.target.value)} placeholder="Condition, seller, source, AI uncertainty, auto/patch/rookie notes..." className="min-h-24 w-full rounded-2xl border border-cm-line bg-black/30 p-3 outline-none" />
-            </label>
           </div>
+        ) : (
+          <div className="rounded-[24px] border border-cm-line bg-cm-surface p-5 text-cm-muted">No cards yet.</div>
+        )}
+      </section>
 
-          <div className="mt-4 rounded-[22px] border border-cm-line bg-black/20 p-4">
-            <p className="text-xs text-cm-muted">Live Profit / Loss</p>
-            <p className="mt-1 text-2xl font-black text-cm-green">{profitLabel(previewCard as any)}</p>
-          </div>
-
-          {message && <p className="mt-3 text-sm text-cm-muted">{message}</p>}
-
-          <button onClick={saveToCollection} disabled={saving || (!image && !backImage)} className="mt-4 w-full rounded-2xl bg-green-600 py-3 font-black disabled:opacity-50">
-            {saving ? "Saving..." : "Save Card to Portfolio"}
-          </button>
-        </section>
-      )}
+      <section className="mt-6 rounded-[28px] border border-cm-line bg-cm-surface p-4">
+        <h2 className="text-lg font-black">Live Source Status</h2>
+        <ul className="mt-3 space-y-2 text-sm text-cm-muted">
+          <li>✅ eBay sold listing search and parsing</li>
+          <li>✅ Median-led Market Engine V2 pricing</li>
+          <li>✅ Average, median, low, high, spread, and confidence score</li>
+          <li>✅ Raw vs graded value model, trend, liquidity, risk, and investment verdict</li>
+          <li>✅ Card value update and local price history</li>
+          <li>🔜 130Point confirmed sale prices</li>
+          <li>🔜 PSA population reports</li>
+        </ul>
+      </section>
 
       <BottomNav />
     </main>
