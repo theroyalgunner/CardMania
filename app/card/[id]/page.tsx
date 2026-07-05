@@ -65,6 +65,36 @@ function gradingProjection(card: CollectionCard, intelligenceScore: number) {
   };
 }
 
+function makeAISummary(
+  card: CollectionCard,
+  marketIntel: ReturnType<typeof calculateMarketIntelligence>,
+  projection: ReturnType<typeof gradingProjection>,
+  missingFields: string[],
+) {
+  const player = card.player || "This card";
+  const valueText = money(marketIntel.fairValue);
+  const verdict = marketIntel.verdict.toLowerCase();
+  const risk = marketIntel.risk.toLowerCase();
+
+  if (missingFields.length) {
+    return `${player} needs cleaner identity data before the valuation should be treated as reliable. Complete ${missingFields.slice(0, 3).join(", ")} first, then refresh live market comps. Current estimated fair value is ${valueText}, with ${risk} risk and a ${verdict} market signal.`;
+  }
+
+  if (marketIntel.verdict === "Sell") {
+    return `${player} is showing a sell-biased profile at ${valueText}. Profit should be reviewed against recent sold comps, especially if the market trend is flattening or spread is widening.`;
+  }
+
+  if (marketIntel.verdict === "Buy") {
+    return `${player} looks undervalued relative to the current model. The card shows a buy signal at ${valueText}, but confirm recent comparable sales before increasing exposure.`;
+  }
+
+  if (projection.raw && projection.expectedProfit > 0) {
+    return `${player} is currently valued around ${valueText}. The grading model shows possible upside, with an expected graded ROI of ${pct(projection.roi)} after estimated fees.`;
+  }
+
+  return `${player} currently profiles as a ${verdict} at approximately ${valueText}. Risk is ${risk}, liquidity is ${marketIntel.liquidityScore}/100, and the best next action is to refresh comps periodically before making a sale or grading decision.`;
+}
+
 export default function CardDetailPage() {
   const params = useParams<{ id: string }>();
   const router = useRouter();
@@ -135,6 +165,8 @@ export default function CardDetailPage() {
     ["serial number", card.serialNumber],
     ["card number", card.cardNumber],
   ].filter(([, value]) => !value).map(([label]) => label);
+
+  const aiSummary = makeAISummary(card, marketIntel, projection, missingFields);
 
   async function save() {
     if (!card) return;
@@ -208,7 +240,7 @@ export default function CardDetailPage() {
       <Link href="/collection" className="text-sm text-cm-purple">← Collection</Link>
 
       <h1 className="mt-4 text-3xl font-black">{card.player || "Unknown Player"}</h1>
-      <p className="mt-1 text-cm-muted">{card.set || "Unknown Set"}</p>
+      <p className="mt-1 text-cm-muted">{card.set || "Unknown Set"} • Card Intelligence V3</p>
 
       {message && <div className="mt-4 rounded-[22px] border border-cm-line bg-cm-surface p-4 text-sm text-cm-muted">{message}</div>}
 
@@ -227,9 +259,9 @@ export default function CardDetailPage() {
       <section className="mt-5 rounded-[28px] border border-cm-line bg-gradient-to-br from-violet-500/20 to-white/5 p-4">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-cm-muted">Card Control Center</p>
-            <h2 className="mt-1 text-xl font-black">{intelligence.action} • {intelligence.band} Profile</h2>
-            <p className="mt-1 text-sm text-cm-muted">Use this page to review scanner data, market value, AI intelligence, grading upside, and historical price movement.</p>
+            <p className="text-xs font-bold uppercase tracking-wide text-cm-muted">Card Intelligence V3</p>
+            <h2 className="mt-1 text-xl font-black">{marketIntel.verdict} • Score {intelligence.score}/100 • {intelligence.band}</h2>
+            <p className="mt-1 text-sm text-cm-muted">Investment score, AI summary, market verdict, grading ROI, risk, liquidity, and comparable sales.</p>
           </div>
           <div className="grid grid-cols-2 gap-2 text-center text-xs md:min-w-[280px]">
             <Link href="/assistant" className="rounded-2xl border border-cm-line bg-black/20 p-3 font-black text-white">Ask AI</Link>
@@ -237,6 +269,17 @@ export default function CardDetailPage() {
             <button onClick={refreshMarketValue} disabled={marketLoading || !query} className="rounded-2xl bg-blue-600 p-3 font-black text-white disabled:opacity-50">Update Market</button>
             <button onClick={() => setEditing(true)} className="rounded-2xl bg-cm-purple p-3 font-black text-white">Edit Data</button>
           </div>
+        </div>
+      </section>
+
+      <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
+        <h2 className="text-lg font-black">AI Investment Summary</h2>
+        <p className="mt-2 text-sm leading-6 text-cm-muted">{aiSummary}</p>
+        <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+          <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">Market Verdict</p><p className={`text-xl font-black ${marketToneClass(marketIntel.verdict)}`}>{marketIntel.verdict}</p></div>
+          <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">Risk</p><p className={`text-xl font-black ${marketToneClass(marketIntel.risk)}`}>{marketIntel.risk}</p></div>
+          <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">Liquidity</p><p className="text-xl font-black">{marketIntel.liquidityScore}/100</p></div>
+          <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">Confidence</p><p className={`text-xl font-black ${marketToneClass(marketIntel.confidenceLabel)}`}>{marketIntel.confidenceScore}/100</p></div>
         </div>
       </section>
 
