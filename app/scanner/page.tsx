@@ -60,14 +60,20 @@ const quickPresets = [
   "Cristiano Ronaldo Al Nassr Panini Prizm 2024",
 ];
 
+function money(value?: number) {
+  return `£${Number(value || 0).toLocaleString()}`;
+}
+
 function estimateFromManual(form: ManualForm) {
   return estimateCardValue({
     player: form.player,
     team: form.team,
     manufacturer: form.manufacturer,
     set: form.set,
+    year: form.year,
     parallel: form.parallel,
     serialNumber: form.serialNumber,
+    cardNumber: form.cardNumber,
     grade: form.grade,
     purchasePrice: Number(form.purchasePrice) || 0,
     estimatedValue: Number(form.estimatedValue) || 0,
@@ -152,7 +158,7 @@ export default function ScannerPage() {
     setDuplicateWarning("");
     setManual((current) => ({ ...current, ...blankForm, grade: current.grade || "Raw" }));
     setVisibleText((current) => current || file.name || "");
-    setMessage(side === "front" ? "Front image loaded. Add the back image if you have it, then scan." : "Back image loaded. Scan will use both sides.");
+    setMessage(side === "front" ? "Front image loaded. Add the back image if you have it, then scan." : "Back image loaded. Scanner V3 will use both sides.");
   }
 
   function applySuggestionFromText(text: string) {
@@ -221,9 +227,9 @@ export default function ScannerPage() {
         purchasePrice: "0",
         estimatedValue: String(suggestedValue || 0),
         notes:
-          [parsed?.notes, backupSuggestion.notes, data?.message, backupSuggestion.reason, "Saved from CardMania AI Scanner Pro"]
+          [parsed?.notes, backupSuggestion.notes, data?.message, backupSuggestion.reason, "Saved from CardMania AI Scanner V3"]
             .filter(Boolean)
-            .join("\n") || "Saved from CardMania AI Scanner Pro",
+            .join("\n") || "Saved from CardMania AI Scanner V3",
       };
 
       setResult(data);
@@ -237,7 +243,13 @@ export default function ScannerPage() {
           const live = await searchLiveMarket(marketQuery);
           setMarketResult(live);
           if (live?.success && live.suggestedValue && live.suggestedValue > 0) {
-            setManual((current) => ({ ...current, estimatedValue: String(live.suggestedValue) }));
+            setManual((current) => ({
+              ...current,
+              estimatedValue: String(live.suggestedValue),
+              notes: [current.notes, `Market Intelligence V2: ${money(live.suggestedValue)} from ${live.keptCount || live.soldCount || 0} comparable sales.`]
+                .filter(Boolean)
+                .join("\n"),
+            }));
           }
         } finally {
           setMarketLoading(false);
@@ -246,6 +258,8 @@ export default function ScannerPage() {
 
       if (data?.mode === "manual-required" || data?.quota) {
         setMessage("AI was limited. Smart Fill used visible text/file clues where possible.");
+      } else {
+        setMessage("Scanner V3 completed: recognition, duplicate check, and market valuation finished.");
       }
     } catch (error: any) {
       const suggestion = inferCardFromText(`${fileName} ${visibleText}`);
@@ -289,7 +303,7 @@ export default function ScannerPage() {
       serialNumber: manual.serialNumber || ai?.serialNumber || "",
       cardNumber: manual.cardNumber || ai?.cardNumber || "",
       grade: manual.grade || ai?.grade || "Raw",
-      notes: manual.notes || ai?.notes || "Saved from AI Scanner Pro",
+      notes: manual.notes || ai?.notes || "Saved from AI Scanner V3",
       purchasePrice: Number(manual.purchasePrice) || 0,
       estimatedValue: Number(manual.estimatedValue) || 0,
       confidence: ai?.confidence,
@@ -306,7 +320,7 @@ export default function ScannerPage() {
     }
 
     setMessage(saveResult.message || "Saved.");
-    router.push("/collection");
+    router.push(`/card/${card.id}`);
   }
 
   const previewCard = {
@@ -317,9 +331,9 @@ export default function ScannerPage() {
   return (
     <main className="min-h-screen px-4 pb-28 pt-6">
       <div className="mb-5">
-        <p className="text-sm text-cm-muted">CardMania Scanner</p>
-        <h1 className="text-3xl font-black">Scanner Pro</h1>
-        <p className="mt-1 text-sm text-cm-muted">AI Scanner V2: real vision scan, OCR clues, feature detection, duplicate check, live market comps, and manual fallback.</p>
+        <p className="text-sm text-cm-muted">CardMania Scanner • V10 AI Scanner V3</p>
+        <h1 className="text-3xl font-black">Scanner Intelligence</h1>
+        <p className="mt-1 text-sm text-cm-muted">Scan → recognize → check duplicates → price from Market Intelligence V2 → save to portfolio.</p>
       </div>
 
       <div className="rounded-[28px] border border-cm-line bg-cm-surface p-5">
@@ -338,7 +352,7 @@ export default function ScannerPage() {
         {backImage && <img src={backImage} alt="back preview" className="mt-4 max-h-80 w-full rounded-2xl bg-black/30 object-contain" />}
 
         <button onClick={scan} disabled={(!image && !backImage) || loading} className="mt-4 w-full rounded-2xl bg-cm-purple py-3 font-black disabled:opacity-50">
-          {loading ? "Scanning..." : "Scan Card"}
+          {loading ? "Scanning and pricing..." : "Scan + Price Card"}
         </button>
       </div>
 
@@ -435,20 +449,20 @@ export default function ScannerPage() {
               {marketResult?.success && (
                 <div className="mt-4 grid gap-3 md:grid-cols-4">
                   <div className="rounded-2xl border border-cm-line bg-white/5 p-3">
-                    <p className="text-xs text-cm-muted">Suggested</p>
-                    <p className="text-lg font-black">£{marketResult.suggestedValue || 0}</p>
+                    <p className="text-xs text-cm-muted">Market Value</p>
+                    <p className="text-lg font-black">{money(marketResult.suggestedValue || 0)}</p>
                   </div>
                   <div className="rounded-2xl border border-cm-line bg-white/5 p-3">
                     <p className="text-xs text-cm-muted">Median</p>
-                    <p className="text-lg font-black">£{marketResult.medianPrice || 0}</p>
+                    <p className="text-lg font-black">{money(marketResult.medianPrice || 0)}</p>
                   </div>
                   <div className="rounded-2xl border border-cm-line bg-white/5 p-3">
                     <p className="text-xs text-cm-muted">Sold Comps</p>
                     <p className="text-lg font-black">{marketResult.keptCount || marketResult.soldCount || 0}</p>
                   </div>
                   <div className="rounded-2xl border border-cm-line bg-white/5 p-3">
-                    <p className="text-xs text-cm-muted">Spread</p>
-                    <p className="text-lg font-black">{marketResult.spreadPercent ?? 0}%</p>
+                    <p className="text-xs text-cm-muted">Range</p>
+                    <p className="text-lg font-black">{money(marketResult.lowestPrice)}–{money(marketResult.highestPrice)}</p>
                   </div>
                 </div>
               )}
@@ -459,7 +473,7 @@ export default function ScannerPage() {
                     <a key={`${sale.title}-${index}`} href={sale.url || marketResult.searchUrl} target="_blank" rel="noreferrer" className="rounded-2xl border border-cm-line bg-white/5 p-3 text-sm hover:bg-white/10">
                       <div className="flex items-start justify-between gap-3">
                         <span className="line-clamp-2 font-bold">{sale.title}</span>
-                        <span className="shrink-0 font-black">£{sale.price}</span>
+                        <span className="shrink-0 font-black">{money(sale.price)}</span>
                       </div>
                       {sale.flags?.length ? <p className="mt-1 text-xs text-cm-muted">{sale.flags.join(" • ")}</p> : null}
                     </a>
@@ -511,7 +525,7 @@ export default function ScannerPage() {
           {message && <p className="mt-3 text-sm text-cm-muted">{message}</p>}
 
           <button onClick={saveToCollection} disabled={saving || (!image && !backImage)} className="mt-4 w-full rounded-2xl bg-green-600 py-3 font-black disabled:opacity-50">
-            {saving ? "Saving..." : "Save Card"}
+            {saving ? "Saving..." : "Save Card to Portfolio"}
           </button>
         </section>
       )}
