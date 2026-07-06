@@ -7,7 +7,7 @@ import { CollectionCard } from "@/services/collectionStore";
 import { listCards, updateCard } from "@/services/cardRepository";
 import { estimateCardValue, profitLabel } from "@/services/marketEngine";
 import { addPriceHistoryPoint, getPriceHistory } from "@/services/priceHistoryStore";
-import { buildMarketQuery, LiveMarketResult, searchLiveMarket } from "@/services/liveMarket";
+import { buildMarketQuery, LiveMarketResult, searchLiveMarket, searchLiveMarketForCard } from "@/services/liveMarket";
 import { calculateMarketIntelligence, marketToneClass } from "@/services/marketIntelligence";
 
 function money(value?: number) {
@@ -100,8 +100,7 @@ export default function MarketPage() {
     setSearchingId(card.id);
     setStatus("");
 
-    const result = await searchLiveMarket(query);
-    setMarketResult(result);
+const result = await searchLiveMarketForCard(card);    setMarketResult(result);
     setSearchingId(null);
 
     if (!result.success) {
@@ -135,8 +134,7 @@ export default function MarketPage() {
     let updated = 0;
 
     for (const card of targets) {
-      const result = await searchLiveMarket(buildMarketQuery(card));
-      const suggestedValue = Number(result.suggestedValue || result.medianPrice || result.averagePrice || 0);
+const result = await searchLiveMarketForCard(card);      const suggestedValue = Number(result.suggestedValue || result.medianPrice || result.averagePrice || 0);
 
       if (result.success && suggestedValue > 0) {
         await updateCard(card.id, { estimatedValue: suggestedValue });
