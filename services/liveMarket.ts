@@ -1,8 +1,9 @@
 import { CollectionCard } from "@/services/collectionStore";
 import { buildFingerprint } from "@/services/cardFingerprint";
-import { getMemory, rememberMarketSearch } from "@/services/marketMemory";
-import { processMarketSales } from "@/services/marketEngine";
+import { processMarketSales, type MarketEngineSummary } from "@/services/marketEngine";
 import { buildQueries } from "@/services/queryBuilder";
+import { optimizeQueries } from "@/services/marketLearning/queryOptimizer";
+import { learnFromMarketResult } from "@/services/marketLearning/learningEngine";
 
 export type LiveMarketSale = {
   title: string;
@@ -39,6 +40,7 @@ export type LiveMarketResult = {
   confidenceScore?: number;
   note?: string;
   error?: string;
+  marketSummary?: MarketEngineSummary;
 };
 
 function cleanToken(value?: string | number) {
@@ -57,17 +59,9 @@ function withoutFullSerial(query: string) {
 }
 
 function ebaySearchUrl(query: string) {
-  return `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(query)}&LH_Sold=1&LH_Complete=1&_sop=13`;
-}
-
-function mergeQueryOrder(queries: string[], fingerprint?: string) {
-  if (!fingerprint) return queries;
-  const memory = getMemory(fingerprint);
-  if (!memory) return queries;
-
-  const successful = memory.successfulQueries.filter((query) => queries.includes(query));
-  const remaining = queries.filter((query) => !successful.includes(query));
-  return [...successful, ...remaining];
+  return `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(
+    query
+  )}&LH_Sold=1&LH_Complete=1&_sop=13`;
 }
 
 function refineResult(data: LiveMarketResult, query: string): LiveMarketResult {
@@ -91,9 +85,10 @@ function refineResult(data: LiveMarketResult, query: string): LiveMarketResult {
     confidence: engine.confidence,
     confidenceScore: engine.confidenceScore,
     pricingMethod: engine.pricingMethod,
+    marketSummary: engine,
     note:
       engine.keptCount > 0
-        ? `Market V10 used query: ${query}. Kept ${engine.keptCount} strict comps and rejected ${engine.rejectedCount} weak/base/wrong-parallel matches.`
+        ? `Market V11 used query: ${query}. Kept ${engine.keptCount} strict comps and rejected ${engine.rejectedCount} weak/base/wrong-parallel matches.`
         : `No exact comps found for: ${query}. Value not updated.`,
   };
 }
@@ -149,11 +144,14 @@ export async function searchLiveMarket(query: string): Promise<LiveMarketResult>
   }
 }
 
-export async function searchLiveMarketForCard(card: Partial<CollectionCard>): Promise<LiveMarketResult> {
+export async function searchLiveMarketForCard(
+  card: Partial<CollectionCard>
+): Promise<LiveMarketResult> {
   const fingerprint = buildFingerprint(card);
-  const queries = mergeQueryOrder(buildMarketQueries(card), fingerprint);
+  const baseQueries = buildMarketQueries(card);
+  const queries = optimizeQueries(card, baseQueries);
 
-  if (!queries.length) {
+  if (!queries.length || !fingerprint) {
     return {
       success: false,
       error: "Not enough card details to search market.",
@@ -166,22 +164,19 @@ export async function searchLiveMarketForCard(card: Partial<CollectionCard>): Pr
     const result = await searchLiveMarket(query);
     attempts.push(result);
 
-    const success = result.success && Number(result.keptCount || 0) > 0 && Number(result.suggestedValue || 0) > 0;
+    if (result.marketSummary) {
+      learnFromMarketResult(card, result.marketSummary, query);
+    }
 
-    rememberMarketSearch({
-      fingerprint,
-      query,
-      success,
-      confidenceScore: result.confidenceScore,
-      requiredWords: result.sales?.flatMap((sale) => sale.flags || []).filter((flag) => !/^Rejected|mismatch|Wrong|Missing/i.test(flag)) || [],
-      excludedWords: result.sales?.flatMap((sale) => sale.flags || []).filter((flag) => /^Rejected|mismatch|Wrong|Missing/i.test(flag)) || [],
-    });
-
-    if ((result.keptCount || 0) >= 3 && (result.confidenceScore || 0) >= 60 && (result.suggestedValue || 0) > 0) {
+    if (
+      (result.keptCount || 0) >= 3 &&
+      (result.confidenceScore || 0) >= 60 &&
+      (result.suggestedValue || 0) > 0
+    ) {
       return {
         ...result,
         queries,
-        note: `${result.note} Market memory saved this successful query.`,
+        note: `${result.note} Market Learning saved this successful query.`,
       };
     }
   }
@@ -189,7 +184,8 @@ export async function searchLiveMarketForCard(card: Partial<CollectionCard>): Pr
   const best =
     attempts
       .filter((result) => result.success)
-      .sort((a, b) => (b.confidenceScore || 0) - (a.confidenceScore || 0))[0] || attempts[0];
+      .sort((a, b) => (b.confidenceScore || 0) - (a.confidenceScore || 0))[0] ||
+    attempts[0];
 
   return {
     ...best,
