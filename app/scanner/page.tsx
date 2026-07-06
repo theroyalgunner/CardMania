@@ -245,7 +245,10 @@ export default function ScannerPage() {
           if (live?.success && live.suggestedValue && live.suggestedValue > 0) {
             setManual((current) => ({
               ...current,
-              estimatedValue: String(live.suggestedValue),
+              estimatedValue:
+  live.suggestedValue && live.suggestedValue > 0
+    ? String(live.suggestedValue)
+    : String(card.estimatedValue || card.purchasePrice || 0),
               notes: [current.notes, `Market Intelligence V2: ${money(live.suggestedValue)} from ${live.keptCount || live.soldCount || 0} comparable sales.`]
                 .filter(Boolean)
                 .join("\n"),

@@ -137,7 +137,11 @@ const result = await searchLiveMarketForCard(card);    setMarketResult(result);
 const result = await searchLiveMarketForCard(card);      const suggestedValue = Number(result.suggestedValue || result.medianPrice || result.averagePrice || 0);
 
       if (result.success && suggestedValue > 0) {
-        await updateCard(card.id, { estimatedValue: suggestedValue });
+        if (suggestedValue > 0) {
+  await updateCard(card.id, {
+    estimatedValue: suggestedValue,
+  });
+}
         addPriceHistoryPoint(card.id, result);
         updated += 1;
       }

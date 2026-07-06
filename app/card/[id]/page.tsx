@@ -219,7 +219,10 @@ export default function CardDetailPage() {
 
     if (suggestedValue > 0) {
       const update = await updateCard(card.id, {
-        estimatedValue: suggestedValue,
+        estimatedValue:
+  suggestedValue > 0
+    ? suggestedValue
+    : card.estimatedValue || card.purchasePrice || 0,
         notes: card.notes,
       });
 
