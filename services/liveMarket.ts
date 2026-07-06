@@ -164,7 +164,7 @@ function refineResult(data: LiveMarketResult, query: string): LiveMarketResult {
   const averagePrice = average(prices);
   const lowestPrice = prices.length ? Math.min(...prices) : 0;
   const highestPrice = prices.length ? Math.max(...prices) : 0;
-  const suggestedValue = medianPrice || data.suggestedValue || 0;
+  const suggestedValue = kept.length ? medianPrice : 0;
 
   return {
     ...data,
