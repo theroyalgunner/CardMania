@@ -51,6 +51,17 @@ function cardNumberToken(cardNumber?: string) {
   return value.startsWith("#") ? value : `#${value}`;
 }
 
+function serialDenominator(serialNumber?: string) {
+  const value = cleanToken(serialNumber);
+  const match = value.match(/\/?(\d+)\s*\/\s*(\d+)/);
+  if (!match) return value;
+  return `/${match[2]}`;
+}
+
+function withoutFullSerial(query: string) {
+  return query.replace(/\b0*\d+\s*\/\s*(\d+)\b/g, "/$1").replace(/\s+/g, " ").trim();
+}
+
 function compact(parts: string[]) {
   return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
 }
@@ -61,7 +72,7 @@ export function buildMarketQueries(card: Partial<CollectionCard>) {
   const manufacturer = cleanToken(card.manufacturer);
   const set = cleanToken(card.set);
   const parallel = cleanToken(card.parallel);
-  const serial = cleanToken(card.serialNumber);
+  const serial = serialDenominator(card.serialNumber);
   const number = cardNumberToken(card.cardNumber);
   const grade = cleanToken(card.grade);
   const gradePart = grade && grade.toLowerCase() !== "raw" ? grade : "";
@@ -180,7 +191,7 @@ export function marketConfidenceLabel(result?: LiveMarketResult | null) {
 
 export async function searchLiveMarket(query: string): Promise<LiveMarketResult> {
   try {
-    const cleanQuery = cleanToken(query);
+    const cleanQuery = withoutFullSerial(cleanToken(query));
 
     const res = await fetch("/api/ebay", {
       method: "POST",
