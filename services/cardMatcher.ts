@@ -47,6 +47,11 @@ export function matchMarketListing(title: string, query: string): MatchResult {
     if (t.includes(junk)) rejects.push(`Junk listing: ${junk}`);
   }
 
+  const queryHasParallelOrSerial = Boolean(foundParallel(q) || serialDenominator(q));
+  if (queryHasParallelOrSerial && /\bbase\b/.test(t)) {
+    rejects.push("Rejected base card");
+  }
+
   const parallel = foundParallel(q);
   if (parallel) {
     if (!t.includes(parallel)) rejects.push(`Wrong/missing parallel: ${parallel}`);
