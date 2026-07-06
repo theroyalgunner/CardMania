@@ -1,3 +1,7 @@
+import {
+  validateMarketSale,
+  isRejectedByValidation,
+} from "@/services/marketValidation/marketValidation";
 import { CollectionCard } from "./collectionStore";
 import { MatchResult, matchMarketListing } from "@/services/cardMatcher";
 
@@ -150,17 +154,30 @@ function wordsFromMatches(matches: MatchResult[]) {
   };
 }
 
-export function processMarketSales(sales: MarketEngineSale[], query: string): MarketEngineSummary {
+export function processMarketSales(
+  sales: MarketEngineSale[],
+  query: string,
+  card?: Partial<CollectionCard>
+): MarketEngineSummary {
   const scored = sales.map((sale) => {
-    const match = matchMarketListing(sale.title || "", query);
-    return {
-      ...sale,
-      score: match.score,
-      flags: [...(sale.flags || []), ...match.reasons, ...match.rejects],
-      accepted: match.accepted,
-      match,
-    };
-  });
+  const match = matchMarketListing(sale.title || "", query);
+  const validation = card ? validateMarketSale(sale, card) : [];
+  const rejectedByValidation = isRejectedByValidation(validation);
+
+  return {
+    ...sale,
+    score: rejectedByValidation ? 0 : match.score,
+    flags: [
+      ...(sale.flags || []),
+      ...match.reasons,
+      ...match.rejects,
+      ...validation.map((item) => item.message),
+    ],
+    accepted: match.accepted && !rejectedByValidation,
+    match,
+    validation,
+  };
+});
 
   const kept = scored
     .filter((sale) => sale.accepted)
