@@ -1,5 +1,8 @@
 import { CollectionCard } from "@/services/collectionStore";
-import { matchMarketListing } from "@/services/cardMatcher";
+import { buildFingerprint } from "@/services/cardFingerprint";
+import { getMemory, rememberMarketSearch } from "@/services/marketMemory";
+import { processMarketSales } from "@/services/marketEngine";
+import { buildQueries } from "@/services/queryBuilder";
 
 export type LiveMarketSale = {
   title: string;
@@ -46,143 +49,61 @@ function cleanToken(value?: string | number) {
     .trim();
 }
 
-function cardNumberToken(cardNumber?: string) {
-  const value = cleanToken(cardNumber);
-  if (!value) return "";
-  return value.startsWith("#") ? value : `#${value}`;
-}
-
-function serialDenominator(serialNumber?: string) {
-  const value = cleanToken(serialNumber);
-  const match = value.match(/\/?(\d+)\s*\/\s*(\d+)/);
-  if (!match) return value;
-  return `/${match[2]}`;
-}
-
 function withoutFullSerial(query: string) {
-  return query.replace(/\b0*\d+\s*\/\s*(\d+)\b/g, "/$1").replace(/\s+/g, " ").trim();
+  return query
+    .replace(/\b0*\d+\s*\/\s*(\d+)\b/g, "/$1")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
-function compact(parts: string[]) {
-  return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+function ebaySearchUrl(query: string) {
+  return `https://www.ebay.co.uk/sch/i.html?_nkw=${encodeURIComponent(query)}&LH_Sold=1&LH_Complete=1&_sop=13`;
 }
 
-export function buildMarketQueries(card: Partial<CollectionCard>) {
-  const player = cleanToken(card.player);
-  const year = cleanToken(card.year);
-  const manufacturer = cleanToken(card.manufacturer);
-  const set = cleanToken(card.set);
-  const parallel = cleanToken(card.parallel);
-  const serial = serialDenominator(card.serialNumber);
-  const number = cardNumberToken(card.cardNumber);
-  const grade = cleanToken(card.grade);
-  const gradePart = grade && grade.toLowerCase() !== "raw" ? grade : "";
+function mergeQueryOrder(queries: string[], fingerprint?: string) {
+  if (!fingerprint) return queries;
+  const memory = getMemory(fingerprint);
+  if (!memory) return queries;
 
-  const queries = [
-    compact([player, year, manufacturer, set, parallel, serial, number, gradePart]),
-    compact([player, year, manufacturer, set, parallel, serial, number]),
-    compact([player, manufacturer, set, parallel, serial, number]),
-    compact([player, manufacturer, set, parallel, serial]),
-    compact([player, manufacturer, set, number]),
-    compact([player, manufacturer, set]),
-  ];
-
-  return Array.from(new Set(queries.filter((q) => q.length > 3)));
-}
-
-export function buildMarketQuery(card: Partial<CollectionCard>) {
-  return buildMarketQueries(card)[0] || "";
-}
-
-function median(values: number[]) {
-  const sorted = values.filter((v) => Number.isFinite(v) && v > 0).sort((a, b) => a - b);
-  if (!sorted.length) return 0;
-  const mid = Math.floor(sorted.length / 2);
-  return sorted.length % 2 ? sorted[mid] : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
-}
-
-function average(values: number[]) {
-  const clean = values.filter((v) => Number.isFinite(v) && v > 0);
-  if (!clean.length) return 0;
-  return Math.round(clean.reduce((sum, value) => sum + value, 0) / clean.length);
-}
-
-function scoreSale(title: string, query: string) {
-  const t = title.toLowerCase();
-  const q = query.toLowerCase();
-  let score = 0;
-  const flags: string[] = [];
-
-  const important = q
-    .replace(/[#/]/g, " ")
-    .split(/\s+/)
-    .filter((word) => word.length >= 3);
-
-  for (const word of important) {
-    if (t.includes(word)) score += 10;
-  }
-
-  if (/\blot\b|\bbundle\b|\bjob lot\b|\bset of\b|\bteam set\b|\bbox\b|\bpack\b|\bcase\b/i.test(t)) {
-    score -= 60;
-    flags.push("Rejected lot/box/pack");
-  }
-
-  if (/\bauto|autograph|signed\b/i.test(t) && !/\bauto|autograph|signed\b/i.test(q)) {
-    score -= 45;
-    flags.push("Auto mismatch");
-  }
-
-  if (/\bpsa|bgs|sgc|cgc|tag\b/i.test(t) && !/\bpsa|bgs|sgc|cgc|tag\b/i.test(q)) {
-    score -= 45;
-    flags.push("Grade mismatch");
-  }
-
-  if (/\bpatch|relic|jersey|memorabilia\b/i.test(t) && !/\bpatch|relic|jersey|memorabilia\b/i.test(q)) {
-    score -= 40;
-    flags.push("Relic mismatch");
-  }
-
-  return { score: Math.max(0, Math.min(100, score)), flags };
+  const successful = memory.successfulQueries.filter((query) => queries.includes(query));
+  const remaining = queries.filter((query) => !successful.includes(query));
+  return [...successful, ...remaining];
 }
 
 function refineResult(data: LiveMarketResult, query: string): LiveMarketResult {
-  const sales = data.sales || [];
-
-  const scored = sales.map((sale) => {
-    const scoredSale = scoreSale(sale.title || "", query);
-    return { ...sale, score: scoredSale.score, flags: scoredSale.flags };
-  });
-
-  const kept = scored
-    .filter((sale) => Number(sale.price || 0) > 0)
-    .filter((sale) => (sale.score || 0) >= 55)
-    .sort((a, b) => (b.score || 0) - (a.score || 0))
-    .slice(0, 8);
-
-  const prices = kept.map((sale) => Number(sale.price || 0));
-  const medianPrice = median(prices);
-  const averagePrice = average(prices);
-  const lowestPrice = prices.length ? Math.min(...prices) : 0;
-  const highestPrice = prices.length ? Math.max(...prices) : 0;
-  const suggestedValue = kept.length ? medianPrice : 0;
+  const engine = processMarketSales(data.sales || [], query);
 
   return {
     ...data,
     query,
-    sales: kept,
-    soldCount: scored.length,
-    keptCount: kept.length,
-    rejectedCount: Math.max(0, scored.length - kept.length),
-    medianPrice,
-    averagePrice,
-    lowestPrice,
-    highestPrice,
-    suggestedValue,
-    confidence: kept.length >= 4 ? "High" : kept.length >= 2 ? "Medium" : "Low",
-    confidenceScore: kept.length >= 4 ? 88 : kept.length >= 2 ? 62 : 25,
-    pricingMethod: "Market V5 multi-query exact-comps median",
-    note: `Market V5 used query: ${query}. Kept ${kept.length} comps, rejected ${Math.max(0, scored.length - kept.length)} weaker matches.`,
+    sales: engine.sales,
+    averagePrice: engine.averagePrice,
+    medianPrice: engine.medianPrice,
+    lowestPrice: engine.lowestPrice,
+    highestPrice: engine.highestPrice,
+    suggestedValue: engine.keptCount > 0 ? engine.suggestedValue : 0,
+    soldCount: engine.soldCount,
+    keptCount: engine.keptCount,
+    rejectedCount: engine.rejectedCount,
+    spreadPercent: engine.spreadPercent,
+    fairLow: engine.fairLow,
+    fairHigh: engine.fairHigh,
+    confidence: engine.confidence,
+    confidenceScore: engine.confidenceScore,
+    pricingMethod: engine.pricingMethod,
+    note:
+      engine.keptCount > 0
+        ? `Market V10 used query: ${query}. Kept ${engine.keptCount} strict comps and rejected ${engine.rejectedCount} weak/base/wrong-parallel matches.`
+        : `No exact comps found for: ${query}. Value not updated.`,
   };
+}
+
+export function buildMarketQueries(card: Partial<CollectionCard>) {
+  return buildQueries(card).map(withoutFullSerial);
+}
+
+export function buildMarketQuery(card: Partial<CollectionCard>) {
+  return buildMarketQueries(card)[0] || "";
 }
 
 export function marketConfidenceLabel(result?: LiveMarketResult | null) {
@@ -193,6 +114,10 @@ export function marketConfidenceLabel(result?: LiveMarketResult | null) {
 export async function searchLiveMarket(query: string): Promise<LiveMarketResult> {
   try {
     const cleanQuery = withoutFullSerial(cleanToken(query));
+
+    if (!cleanQuery) {
+      return { success: false, error: "Missing search query." };
+    }
 
     const res = await fetch("/api/ebay", {
       method: "POST",
@@ -209,7 +134,13 @@ export async function searchLiveMarket(query: string): Promise<LiveMarketResult>
       };
     }
 
-    return refineResult(data, cleanQuery);
+    return refineResult(
+      {
+        ...data,
+        searchUrl: data?.searchUrl || ebaySearchUrl(cleanQuery),
+      },
+      cleanQuery
+    );
   } catch (error: any) {
     return {
       success: false,
@@ -219,7 +150,8 @@ export async function searchLiveMarket(query: string): Promise<LiveMarketResult>
 }
 
 export async function searchLiveMarketForCard(card: Partial<CollectionCard>): Promise<LiveMarketResult> {
-  const queries = buildMarketQueries(card);
+  const fingerprint = buildFingerprint(card);
+  const queries = mergeQueryOrder(buildMarketQueries(card), fingerprint);
 
   if (!queries.length) {
     return {
@@ -234,11 +166,22 @@ export async function searchLiveMarketForCard(card: Partial<CollectionCard>): Pr
     const result = await searchLiveMarket(query);
     attempts.push(result);
 
-    if ((result.keptCount || 0) >= 3 && (result.confidenceScore || 0) >= 60) {
+    const success = result.success && Number(result.keptCount || 0) > 0 && Number(result.suggestedValue || 0) > 0;
+
+    rememberMarketSearch({
+      fingerprint,
+      query,
+      success,
+      confidenceScore: result.confidenceScore,
+      requiredWords: result.sales?.flatMap((sale) => sale.flags || []).filter((flag) => !/^Rejected|mismatch|Wrong|Missing/i.test(flag)) || [],
+      excludedWords: result.sales?.flatMap((sale) => sale.flags || []).filter((flag) => /^Rejected|mismatch|Wrong|Missing/i.test(flag)) || [],
+    });
+
+    if ((result.keptCount || 0) >= 3 && (result.confidenceScore || 0) >= 60 && (result.suggestedValue || 0) > 0) {
       return {
         ...result,
         queries,
-        note: `${result.note} Multi-query search stopped after finding reliable comps.`,
+        note: `${result.note} Market memory saved this successful query.`,
       };
     }
   }
@@ -251,6 +194,10 @@ export async function searchLiveMarketForCard(card: Partial<CollectionCard>): Pr
   return {
     ...best,
     queries,
-    note: `${best?.note || "Market search completed."} Multi-query fallback used best available result.`,
+    suggestedValue: best?.keptCount ? best.suggestedValue : 0,
+    note:
+      best?.keptCount && best.keptCount > 0
+        ? `${best.note || "Market search completed."} Multi-query fallback used best strict result.`
+        : "No exact comps found after multi-query search. Value not updated.",
   };
 }
