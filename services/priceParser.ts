@@ -168,7 +168,20 @@ export function parsePricesFromText(text: string, query = ""): ParsedSale[] {
 }
 
 export function summarizeSales(sales: ParsedSale[]): PriceSummary {
-  const comparableSales = sales.filter((sale) => Number(sale.score || 0) >= 45 || sales.length < 5);
+  const comparableSales = sales.filter((sale) => {
+  const score = Number(sale.score || 0);
+  const title = sale.title.toLowerCase();
+
+  if (title.includes("lot")) return false;
+  if (title.includes("break")) return false;
+  if (title.includes("box")) return false;
+  if (title.includes("pack")) return false;
+  if (title.includes("team set")) return false;
+  if (title.includes("printing plate")) return false;
+  if (title.includes("redemption")) return false;
+
+  return score >= 72;
+});
   const valid = comparableSales
     .map((sale) => sale.price)
     .filter((price) => Number.isFinite(price) && price > 0)
