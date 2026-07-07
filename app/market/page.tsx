@@ -100,7 +100,8 @@ export default function MarketPage() {
     setSearchingId(card.id);
     setStatus("");
 
-const result = await searchLiveMarketForCard(card);    setMarketResult(result);
+    const result = await searchLiveMarketForCard(card);
+    setMarketResult(result);
     setSearchingId(null);
 
     if (!result.success) {
@@ -134,7 +135,8 @@ const result = await searchLiveMarketForCard(card);    setMarketResult(result);
     let updated = 0;
 
     for (const card of targets) {
-const result = await searchLiveMarketForCard(card);      const suggestedValue = Number(result.suggestedValue || result.medianPrice || result.averagePrice || 0);
+      const result = await searchLiveMarketForCard(card);
+      const suggestedValue = Number(result.suggestedValue || result.medianPrice || result.averagePrice || 0);
 
       if (result.success && suggestedValue > 0) {
         if (suggestedValue > 0) {
@@ -237,7 +239,7 @@ const result = await searchLiveMarketForCard(card);      const suggestedValue = 
       <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
         <h2 className="text-lg font-black">Live Market Search</h2>
         <p className="mt-1 text-sm text-cm-muted">
-          Search sold listings using any card name or details. V2 prioritizes median comps and rejected outliers.
+          Search sold listings using Market V11 learning, strict validation, memory-ranked queries, and rejected bad comps.
         </p>
 
         <input
@@ -258,11 +260,12 @@ const result = await searchLiveMarketForCard(card);      const suggestedValue = 
         {marketResult && (
           <div className="mt-4 rounded-2xl border border-cm-line bg-black/20 p-4">
             <p className="text-xs text-cm-muted">Parsed Market Result</p>
-            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-4">
+            <div className="mt-3 grid grid-cols-2 gap-3 md:grid-cols-5">
               <div><p className="text-xs text-cm-muted">Market Value</p><p className="text-xl font-black">{money(marketResult.suggestedValue || marketResult.medianPrice || marketResult.averagePrice)}</p></div>
               <div><p className="text-xs text-cm-muted">Average</p><p className="text-xl font-black">{money(marketResult.averagePrice)}</p></div>
               <div><p className="text-xs text-cm-muted">Median</p><p className="text-xl font-black">{money(marketResult.medianPrice)}</p></div>
               <div><p className="text-xs text-cm-muted">Confidence</p><p className="text-xl font-black">{marketResult.confidence || "Low"}</p></div>
+              <div><p className="text-xs text-cm-muted">Learning</p><p className="text-xl font-black">{marketResult.queries?.length ? `${marketResult.queries.length}Q` : "Manual"}</p></div>
             </div>
             <p className="mt-3 text-sm text-cm-muted">
               {marketResult.soldCount || 0} comps • Range {money(marketResult.lowestPrice)} – {money(marketResult.highestPrice)} • Spread {marketResult.spreadPercent || 0}%
@@ -271,6 +274,23 @@ const result = await searchLiveMarketForCard(card);      const suggestedValue = 
               Source: {marketResult.sourceMode === "api" ? "eBay API" : "eBay sold-search fallback"} • Kept {marketResult.keptCount || marketResult.soldCount || 0} / Rejected {marketResult.rejectedCount || 0}
             </p>
             {marketResult.note && <p className="mt-1 text-xs text-cm-muted">{marketResult.note}</p>}
+            {marketResult.query && (
+              <p className="mt-1 text-xs text-cm-muted">
+                Active query: <span className="font-bold text-white/80">{marketResult.query}</span>
+              </p>
+            )}
+            {!!marketResult.queries?.length && (
+              <div className="mt-3 rounded-2xl border border-cm-line bg-black/20 p-3">
+                <p className="text-xs font-black uppercase tracking-wide text-cm-muted">Learning query path</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {marketResult.queries.slice(0, 6).map((query, index) => (
+                    <span key={`${query}-${index}`} className="rounded-xl bg-black/30 px-3 py-1 text-[11px] text-cm-muted">
+                      {index + 1}. {query}
+                    </span>
+                  ))}
+                </div>
+              </div>
+            )}
 
             {!!marketResult.sales?.length && (
               <div className="mt-4 space-y-2">
