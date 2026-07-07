@@ -89,6 +89,11 @@ async function fetchEbayHtml(query: string) {
     });
 
     const html = await response.text();
+
+    if (response.status === 403 || html.includes("Error Page | eBay") || html.includes("noindex,nofollow")) {
+      return [];
+    }
+
     return parsePricesFromText(html, query);
   } catch {
     return [] as ParsedSale[];
@@ -164,7 +169,7 @@ export async function POST(req: Request) {
       note:
         fallback.sales.length > 0
           ? `V4 fallback used best available query: ${fallback.query}. Review comps before trusting value.`
-          : "Opened eBay sold search. No parseable sold prices found.",
+          : "eBay blocked server-side sold-search parsing. Open the eBay sold search link manually, or add an official eBay API token later.",
     });
   } catch (error: any) {
     return NextResponse.json(
