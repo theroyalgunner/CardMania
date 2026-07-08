@@ -10,6 +10,7 @@ import { addPriceHistoryPoint, getPriceHistory } from "@/services/priceHistorySt
 import { buildMarketQuery, LiveMarketResult, searchLiveMarket, searchLiveMarketForCard } from "@/services/liveMarket";
 import { calculateMarketIntelligence, marketToneClass } from "@/services/marketIntelligence";
 import { calculateMarketScore, marketScoreTone } from "@/services/marketScore";
+import { clearMemory } from "@/services/marketMemory";
 import { getMemory } from "@/services/marketMemory";
 import { buildFingerprint } from "@/services/cardFingerprint";
 
@@ -219,6 +220,11 @@ export default function MarketPage() {
     setStatus(result.note || `Opened live eBay sold search for: ${manualQuery}`);
   }
 
+  function resetMarketMemory() {
+    clearMemory();
+    setStatus("Market learning memory cleared. New searches will rebuild learning from fresh results.");
+  }
+
   return (
     <main className="min-h-screen px-4 pb-28 pt-6">
       <p className="text-sm text-cm-muted">{source} Market • CardMania V10 Market Intelligence</p>
@@ -302,6 +308,21 @@ export default function MarketPage() {
       )}
 
       <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <h2 className="text-lg font-black">Market Learning Controls</h2>
+            <p className="mt-1 text-sm text-cm-muted">
+              Clear saved query memory if results become biased or bad searches were learned.
+            </p>
+          </div>
+          <button
+            onClick={resetMarketMemory}
+            className="rounded-2xl border border-red-500/40 bg-red-500/10 px-4 py-2 text-sm font-black text-red-200"
+          >
+            Clear Memory
+          </button>
+        </div>
+
         <h2 className="text-lg font-black">Live Market Search</h2>
         <p className="mt-1 text-sm text-cm-muted">
           Search sold listings using Market V11 learning, strict validation, memory-ranked queries, and rejected bad comps.
