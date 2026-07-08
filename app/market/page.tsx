@@ -9,6 +9,7 @@ import { estimateCardValue, profitLabel } from "@/services/marketEngine";
 import { addPriceHistoryPoint, getPriceHistory } from "@/services/priceHistoryStore";
 import { buildMarketQuery, LiveMarketResult, searchLiveMarket, searchLiveMarketForCard } from "@/services/liveMarket";
 import { calculateMarketIntelligence, marketToneClass } from "@/services/marketIntelligence";
+import { calculateMarketScore, marketScoreTone } from "@/services/marketScore";
 
 function money(value?: number) {
   return `£${Number(value || 0).toLocaleString()}`;
@@ -50,6 +51,32 @@ export default function MarketPage() {
     [cards]
   );
 
+  const marketScoreRows = useMemo(
+    () =>
+      marketRows.map((row) => {
+        const history = getPriceHistory(row.card.id);
+        const latest = history[0];
+        const previous = history[1];
+        const trendPercent = previous?.value ? ((Number(latest?.value || 0) - previous.value) / previous.value) * 100 : 0;
+        const cost = Number(row.card.purchasePrice || 0);
+        const roi = cost ? ((row.intelligence.fairValue - cost) / cost) * 100 : 0;
+
+        return {
+          ...row,
+          marketScore: calculateMarketScore({
+            confidenceScore: row.intelligence.confidenceScore,
+            roi,
+            liquidityScore: row.intelligence.liquidityScore,
+            risk: row.intelligence.risk,
+            serialNumber: row.card.serialNumber,
+            trendPercent,
+            spreadPercent: row.intelligence.spreadPercent,
+          }),
+        };
+      }),
+    [marketRows]
+  );
+
   const topProfits = useMemo(
     () =>
       [...marketRows]
@@ -68,8 +95,11 @@ export default function MarketPage() {
     const highConfidence = marketRows.filter((row) => row.intelligence.confidenceLabel === "High").length;
     const rising = marketRows.filter((row) => row.intelligence.trend === "Rising").length;
     const watch = marketRows.filter((row) => row.intelligence.verdict === "Watch").length;
-    return { value, cost, profit: value - cost, highConfidence, rising, watch };
-  }, [marketRows]);
+    const averageScore = marketScoreRows.length
+      ? Math.round(marketScoreRows.reduce((sum, row) => sum + row.marketScore.score, 0) / marketScoreRows.length)
+      : 0;
+    return { value, cost, profit: value - cost, highConfidence, rising, watch, averageScore };
+  }, [marketRows, marketScoreRows]);
 
   const cardsReadyForMarket = useMemo(
     () => cards.filter((card) => buildMarketQuery(card).length > 3),
@@ -190,7 +220,7 @@ export default function MarketPage() {
         </div>
       )}
 
-      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <section className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-5">
         <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
           <p className="text-xs text-cm-muted">Market Value</p>
           <p className="mt-1 text-2xl font-black">{money(marketSummary.value)}</p>
@@ -211,6 +241,11 @@ export default function MarketPage() {
         <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
           <p className="text-xs text-cm-muted">High Confidence</p>
           <p className="mt-1 text-3xl font-black text-cm-green">{marketSummary.highConfidence}</p>
+        </div>
+
+        <div className="rounded-[24px] border border-cm-line bg-cm-surface p-4">
+          <p className="text-xs text-cm-muted">Avg Market Score</p>
+          <p className={`mt-1 text-3xl font-black ${marketScoreTone(marketSummary.averageScore)}`}>{marketSummary.averageScore}</p>
         </div>
       </section>
 
