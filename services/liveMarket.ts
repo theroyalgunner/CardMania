@@ -2,6 +2,7 @@ import { CollectionCard } from "@/services/collectionStore";
 import { buildFingerprint } from "@/services/cardFingerprint";
 import { processMarketSales, type MarketEngineSummary } from "@/services/marketEngine";
 import { buildQueries } from "@/services/queryBuilder";
+import { generateAISearchQueries } from "@/services/marketSearch/aiSearchGenerator";
 import { optimizeQueries } from "@/services/marketLearning/queryOptimizer";
 import { learnFromMarketResult } from "@/services/marketLearning/learningEngine";
 
@@ -94,7 +95,10 @@ function refineResult(data: LiveMarketResult, query: string): LiveMarketResult {
 }
 
 export function buildMarketQueries(card: Partial<CollectionCard>) {
-  return buildQueries(card).map(withoutFullSerial);
+  return [
+    ...generateAISearchQueries(card),
+    ...buildQueries(card),
+  ].map(withoutFullSerial);
 }
 
 export function buildMarketQuery(card: Partial<CollectionCard>) {
