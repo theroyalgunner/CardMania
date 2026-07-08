@@ -29,6 +29,8 @@ export type PriceSummary = {
 
 function decodeHtml(value: string) {
   return value
+    .replace(/\\u002F/g, "/")
+    .replace(/\\u0026/g, "&")
     .replace(/&amp;/g, "&")
     .replace(/&quot;/g, '"')
     .replace(/&#x27;/g, "'")
@@ -41,39 +43,14 @@ function decodeHtml(value: string) {
 }
 
 function currencyFromSymbol(symbol: string): ParsedSale["currency"] {
-  if (symbol === "$" || symbol.toUpperCase() === "US $") return "USD";
+  if (symbol === "$" || symbol.toUpperCase().includes("US")) return "USD";
   if (symbol === "€") return "EUR";
   return "GBP";
 }
 
 function normalizePrice(raw: string) {
-  const cleaned = raw.replace(/,/g, "").replace(/[^0-9.]/g, "");
-  const value = Number(cleaned);
+  const value = Number(String(raw).replace(/,/g, "").replace(/[^0-9.]/g, ""));
   return Number.isFinite(value) ? value : 0;
-}
-
-function uniqueSales(sales: ParsedSale[]) {
-  const seen = new Set<string>();
-  const unique: ParsedSale[] = [];
-
-  for (const sale of sales) {
-    const key = `${sale.title.toLowerCase()}-${sale.price}-${sale.currency}`;
-    if (!seen.has(key)) {
-      seen.add(key);
-      unique.push(sale);
-    }
-  }
-
-  return unique;
-}
-
-function likelyCardTitle(title: string) {
-  const lower = title.toLowerCase();
-  if (!title || title.length < 4) return false;
-  if (lower.includes("shipping") || lower.includes("postage")) return false;
-  if (lower.includes("sleeve") || lower.includes("toploader")) return false;
-  if (lower.includes("lot of") && !lower.includes("rookie")) return false;
-  return true;
 }
 
 function tokenize(value: string) {
@@ -91,74 +68,123 @@ export function scoreComparable(title: string, query: string) {
 
   let hits = 0;
   const flags: string[] = [];
+
   for (const token of queryTokens) {
     if (titleTokens.has(token)) hits += 1;
   }
 
   const lower = title.toLowerCase();
   if (/psa|bgs|sgc|cgc|tag/.test(lower)) flags.push("Graded");
-  if (/auto|autograph/.test(lower)) flags.push("Auto");
+  if (/auto|autograph|signed/.test(lower)) flags.push("Auto");
   if (/patch|jersey|relic|memorabilia/.test(lower)) flags.push("Relic/Patch");
   if (/rookie|\brc\b/.test(lower)) flags.push("Rookie");
   if (/refractor|parallel|numbered|\/\d{1,5}/.test(lower)) flags.push("Parallel/numbered");
 
   const coverage = hits / queryTokens.length;
   const score = Math.round(Math.min(100, 35 + coverage * 65 + Math.min(10, flags.length * 2)));
+
   return { score, flags };
+}
+
+function uniqueSales(sales: ParsedSale[]) {
+  const seen = new Set<string>();
+  return sales.filter((sale) => {
+    const key = `${sale.title.toLowerCase()}-${sale.price}-${sale.currency}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function likelyBadTitle(title: string) {
+  const lower = title.toLowerCase();
+  return (
+    !title ||
+    title.length < 4 ||
+    lower.includes("shipping") ||
+    lower.includes("postage") ||
+    lower.includes("sleeve") ||
+    lower.includes("toploader")
+  );
 }
 
 export function parsePricesFromText(text: string, query = ""): ParsedSale[] {
   const sales: ParsedSale[] = [];
-  const blocks = text.split(/s-item__info|s-card__caption|srp-results/i);
 
-  for (const block of blocks) {
-    const priceMatch = block.match(/(?:£|\$|€)\s?([0-9,]+(?:\.[0-9]{1,2})?)/);
+  const itemBlocks = text.split(/s-item__wrapper|s-item__info clearfix|s-card__caption/i);
+
+  for (const block of itemBlocks) {
+    const priceMatch =
+      block.match(/(?:£|\$|€)\s?[0-9,]+(?:\.[0-9]{1,2})?/i) ||
+      block.match(/"price"[^}]*"value"\s*:\s*"?([0-9,.]+)"?/i);
+
     if (!priceMatch) continue;
 
-    const price = normalizePrice(priceMatch[0]);
+    const rawPrice = priceMatch[0];
+    const price = normalizePrice(rawPrice);
     if (price <= 0 || price > 100000) continue;
 
     const titleMatch =
-      block.match(/s-item__title[^>]*>(.*?)<\/[^>]+>/i) ||
+      block.match(/<div[^>]*class="[^"]*s-item__title[^"]*"[^>]*>(.*?)<\/div>/i) ||
       block.match(/<span[^>]*role=["']heading["'][^>]*>(.*?)<\/span>/i) ||
-      block.match(/title=["']([^"']{8,180})["']/i);
+      block.match(/"title"\s*:\s*"([^"]{4,220})"/i) ||
+      block.match(/title=["']([^"']{4,220})["']/i);
 
-    const rawTitle = titleMatch?.[1] || "eBay sold listing";
-    const title = decodeHtml(rawTitle);
-    if (!likelyCardTitle(title)) continue;
+    const title = decodeHtml(titleMatch?.[1] || "eBay sold listing");
+    if (likelyBadTitle(title)) continue;
 
-    const dateMatch = block.match(/(?:Sold|Ended)\s+([A-Za-z0-9, ]{6,30})/i);
-    const hrefMatch = block.match(/href=["'](https:\/\/www\.ebay\.[^"']+)["']/i);
+    const hrefMatch =
+      block.match(/href=["'](https:\/\/www\.ebay\.[^"']+)["']/i) ||
+      block.match(/"itemWebUrl"\s*:\s*"([^"]+)"/i);
+
+    const dateMatch =
+      block.match(/(?:Sold|Ended)\s+([A-Za-z0-9, ]{6,30})/i) ||
+      block.match(/"itemEndDate"\s*:\s*"([^"]+)"/i);
+
+    const imageMatch =
+      block.match(/<img[^>]+src=["']([^"']+)["']/i) ||
+      block.match(/"imageUrl"\s*:\s*"([^"]+)"/i);
+
     const { score, flags } = scoreComparable(title, query);
 
     sales.push({
       title,
       price,
-      currency: currencyFromSymbol(priceMatch[0].trim()[0]),
+      currency: currencyFromSymbol(rawPrice.trim()[0]),
       source: "ebay",
       soldDate: dateMatch?.[1]?.trim(),
-      url: hrefMatch?.[1],
+      url: hrefMatch?.[1]?.replace(/\\u002F/g, "/"),
+      image: imageMatch?.[1]?.replace(/\\u002F/g, "/"),
       score,
       flags,
     });
   }
 
   if (!sales.length) {
-    const priceRegex = /(£|\$|€)\s?([0-9,]+(?:\.[0-9]{1,2})?)/g;
-    let match;
+    const jsonTitlePrice =
+      /"title"\s*:\s*"([^"]{4,220})"[\s\S]{0,900}?(?:£|\$|€)\s?[0-9,]+(?:\.[0-9]{1,2})?/gi;
 
-    while ((match = priceRegex.exec(text)) !== null) {
-      const price = normalizePrice(match[0]);
-      if (price > 0 && price < 100000) {
-        sales.push({
-          title: "eBay sold listing",
-          price,
-          currency: currencyFromSymbol(match[1]),
-          source: "ebay",
-          score: query ? 35 : 50,
-          flags: ["Price only"],
-        });
-      }
+    let match;
+    while ((match = jsonTitlePrice.exec(text)) !== null) {
+      const block = match[0];
+      const priceMatch = block.match(/(?:£|\$|€)\s?[0-9,]+(?:\.[0-9]{1,2})?/i);
+      if (!priceMatch) continue;
+
+      const price = normalizePrice(priceMatch[0]);
+      const title = decodeHtml(match[1]);
+
+      if (price <= 0 || price > 100000 || likelyBadTitle(title)) continue;
+
+      const { score, flags } = scoreComparable(title, query);
+
+      sales.push({
+        title,
+        price,
+        currency: currencyFromSymbol(priceMatch[0].trim()[0]),
+        source: "ebay",
+        score,
+        flags,
+      });
     }
   }
 
@@ -167,21 +193,29 @@ export function parsePricesFromText(text: string, query = ""): ParsedSale[] {
     .slice(0, 36);
 }
 
+function medianOf(values: number[]) {
+  const sorted = [...values].sort((a, b) => a - b);
+  if (!sorted.length) return 0;
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
 export function summarizeSales(sales: ParsedSale[]): PriceSummary {
   const comparableSales = sales.filter((sale) => {
-  const score = Number(sale.score || 0);
-  const title = sale.title.toLowerCase();
+    const score = Number(sale.score || 0);
+    const title = sale.title.toLowerCase();
 
-  if (title.includes("lot")) return false;
-  if (title.includes("break")) return false;
-  if (title.includes("box")) return false;
-  if (title.includes("pack")) return false;
-  if (title.includes("team set")) return false;
-  if (title.includes("printing plate")) return false;
-  if (title.includes("redemption")) return false;
+    if (title.includes("lot")) return false;
+    if (title.includes("break")) return false;
+    if (title.includes("box")) return false;
+    if (title.includes("pack")) return false;
+    if (title.includes("team set")) return false;
+    if (title.includes("printing plate")) return false;
+    if (title.includes("redemption")) return false;
 
-  return score >= 72;
-});
+    return score >= 35;
+  });
+
   const valid = comparableSales
     .map((sale) => sale.price)
     .filter((price) => Number.isFinite(price) && price > 0)
@@ -206,62 +240,36 @@ export function summarizeSales(sales: ParsedSale[]): PriceSummary {
     };
   }
 
-  const medianOf = (values: number[]) => {
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
-  };
-
   const initialMedian = medianOf(valid);
-
-  // Auction steals can sit well below the real fair market range.
-  // Remove low/high outliers, then price from the middle of the remaining sold comps.
-  let fairComps = valid.filter((price) => price >= initialMedian * 0.68 && price <= initialMedian * 1.75);
-  if (fairComps.length < Math.min(3, valid.length)) fairComps = valid;
-
-  const q1 = fairComps[Math.floor((fairComps.length - 1) * 0.25)];
-  const q3 = fairComps[Math.floor((fairComps.length - 1) * 0.75)];
-  const iqr = q3 - q1;
-  if (fairComps.length >= 6 && iqr > 0) {
-    const lowFence = q1 - iqr * 1.5;
-    const highFence = q3 + iqr * 1.5;
-    const iqrFiltered = fairComps.filter((price) => price >= lowFence && price <= highFence);
-    if (iqrFiltered.length >= 3) fairComps = iqrFiltered;
-  }
+  let fairComps = valid.filter((price) => price >= initialMedian * 0.5 && price <= initialMedian * 2.2);
+  if (fairComps.length < Math.min(2, valid.length)) fairComps = valid;
 
   const average = fairComps.reduce((sum, price) => sum + price, 0) / fairComps.length;
   const median = medianOf(fairComps);
-  const lowest = valid[0];
-  const highest = valid[valid.length - 1];
-  const fairLow = Math.round(fairComps[0]);
-  const fairHigh = Math.round(fairComps[fairComps.length - 1]);
-  const count = valid.length;
-  const spreadPercent = median ? Math.round(((fairComps[fairComps.length - 1] - fairComps[0]) / median) * 100) : 0;
-  const averageScore = comparableSales.length
-    ? comparableSales.reduce((sum, sale) => sum + Number(sale.score || 0), 0) / comparableSales.length
+  const spreadPercent = median
+    ? Math.round(((fairComps[fairComps.length - 1] - fairComps[0]) / median) * 100)
     : 0;
-  const rejectedByPrice = valid.length - fairComps.length;
-  const confidenceScore = Math.min(100, Math.round(Math.min(55, fairComps.length * 8) + averageScore * 0.35 - Math.min(22, spreadPercent / 9)));
-  const confidence = confidenceScore >= 75 ? "High" : confidenceScore >= 45 ? "Medium" : "Low";
 
-  // Use a 60/40 median-average blend. Median protects against one bad auction; average keeps the estimate realistic.
-  const suggestedValue = Math.round(median * 0.6 + average * 0.4);
+  const confidenceScore = Math.min(
+    100,
+    Math.round(Math.min(55, fairComps.length * 12) + 25 - Math.min(20, spreadPercent / 10))
+  );
 
   return {
     averagePrice: Math.round(average),
     medianPrice: Math.round(median),
-    lowestPrice: Math.round(lowest),
-    highestPrice: Math.round(highest),
-    soldCount: count,
-    confidence,
+    lowestPrice: Math.round(valid[0]),
+    highestPrice: Math.round(valid[valid.length - 1]),
+    soldCount: valid.length,
+    confidence: confidenceScore >= 75 ? "High" : confidenceScore >= 45 ? "Medium" : "Low",
     confidenceScore,
-    suggestedValue,
+    suggestedValue: Math.round(median * 0.65 + average * 0.35),
     spreadPercent,
-    keptCount: comparableSales.length - rejectedByPrice,
-    rejectedCount: Math.max(0, sales.length - comparableSales.length + rejectedByPrice),
-    fairLow,
-    fairHigh,
-    pricingMethod: rejectedByPrice > 0 ? "Median sold comps with auction/outlier filtering" : "Median sold comps",
+    keptCount: fairComps.length,
+    rejectedCount: Math.max(0, sales.length - fairComps.length),
+    fairLow: Math.round(fairComps[0]),
+    fairHigh: Math.round(fairComps[fairComps.length - 1]),
+    pricingMethod: "Parsed eBay sold comps with median/outlier filtering",
   };
 }
 
