@@ -10,6 +10,8 @@ import { addPriceHistoryPoint, getPriceHistory } from "@/services/priceHistorySt
 import { buildMarketQuery, LiveMarketResult, searchLiveMarket, searchLiveMarketForCard } from "@/services/liveMarket";
 import { calculateMarketIntelligence, marketToneClass } from "@/services/marketIntelligence";
 import { calculateMarketScore, marketScoreTone } from "@/services/marketScore";
+import { getMemory } from "@/services/marketMemory";
+import { buildFingerprint } from "@/services/cardFingerprint";
 
 function money(value?: number) {
   return `£${Number(value || 0).toLocaleString()}`;
@@ -103,6 +105,17 @@ export default function MarketPage() {
 
   const cardsReadyForMarket = useMemo(
     () => cards.filter((card) => buildMarketQuery(card).length > 3),
+    [cards]
+  );
+
+  const memoryRows = useMemo(
+    () =>
+      cards
+        .map((card) => ({
+          card,
+          memory: getMemory(buildFingerprint(card)),
+        }))
+        .filter((row) => row.memory),
     [cards]
   );
 
@@ -270,6 +283,23 @@ export default function MarketPage() {
           <p className="mt-1 text-3xl font-black">{marketSummary.watch}</p>
         </div>
       </section>
+
+      {memoryRows.length > 0 && (
+        <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
+          <h2 className="text-lg font-black">Market Learning Memory</h2>
+          <p className="mt-1 text-sm text-cm-muted">Queries that the system learned from successful and failed searches.</p>
+          <div className="mt-4 space-y-3">
+            {memoryRows.slice(0, 5).map(({ card, memory }) => (
+              <div key={card.id} className="rounded-2xl border border-cm-line bg-black/20 p-3">
+                <p className="font-black">{card.player || "Unknown Player"}</p>
+                <p className="mt-1 text-xs text-cm-muted">Successful searches: {memory?.successfulSearches || 0} • Avg confidence: {memory?.averageConfidence || 0}</p>
+                <p className="mt-2 text-xs text-cm-green">Best: {memory?.successfulQueries?.[0] || "None yet"}</p>
+                <p className="mt-1 text-xs text-red-300">Avoid: {memory?.failedQueries?.[0] || "None yet"}</p>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="mt-5 rounded-[28px] border border-cm-line bg-cm-surface p-4">
         <h2 className="text-lg font-black">Live Market Search</h2>
