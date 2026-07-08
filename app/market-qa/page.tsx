@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { BottomNav } from "@/components/BottomNav";
 import { matchMarketListing } from "@/services/cardMatcher";
+import { validateMarketSale, isRejectedByValidation } from "@/services/marketValidation/marketValidation";
 
 type RawSale = {
   title: string;
@@ -51,12 +52,26 @@ export default function MarketQAPage() {
 
       const checked = (data.sales || []).map((sale: RawSale) => {
         const match = matchMarketListing(sale.title || "", query);
+        const validation = validateMarketSale(sale as any, {
+          player: query,
+          set: query,
+          parallel: query,
+          notes: query,
+        });
+        const validationRejected = isRejectedByValidation(validation);
+
         return {
           ...sale,
-          accepted: match.accepted,
-          score: match.score,
-          reasons: match.reasons || [],
-          rejects: match.rejects || [],
+          accepted: match.accepted && !validationRejected,
+          score: validationRejected ? Math.min(match.score, 49) : match.score,
+          reasons: [
+            ...(match.reasons || []),
+            ...validation.filter((rule) => rule.severity === "pass").map((rule) => rule.message),
+          ],
+          rejects: [
+            ...(match.rejects || []),
+            ...validation.filter((rule) => rule.severity === "reject").map((rule) => rule.message),
+          ],
         };
       });
 
