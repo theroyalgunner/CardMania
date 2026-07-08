@@ -13,7 +13,6 @@ import { addPortfolioSnapshot, getPortfolioHistory, portfolioMovement, Portfolio
 import { calculateMarketIntelligence, marketToneClass } from "@/services/marketIntelligence";
 import { getPriceHistory } from "@/services/priceHistoryStore";
 import { portfolioAnalytics } from "@/services/portfolio/portfolioAnalytics";
-import { portfolioAnalytics } from "@/services/portfolio/portfolioAnalytics";
 
 function money(value?: number) {
   return `£${Number(value || 0).toLocaleString()}`;
@@ -104,7 +103,6 @@ export default function PortfolioPage() {
     [cards, historyByCard]
   );
 
-  const historyByCard = useMemo(
     () => Object.fromEntries(cards.map((card) => [card.id, getPriceHistory(card.id)])),
     [cards]
   );
