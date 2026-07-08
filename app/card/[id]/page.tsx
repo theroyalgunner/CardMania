@@ -11,6 +11,7 @@ import { buildMarketQuery, LiveMarketResult, marketConfidenceLabel, searchLiveMa
 import { calculateCardIntelligence, scoreColor } from "@/services/cardIntelligence";
 import { calculateDetailIntelligence, detailToneClass, riskToneClass } from "@/services/cardDetailIntelligence";
 import { calculateMarketIntelligence, marketToneClass } from "@/services/marketIntelligence";
+import { explainCardMarket } from "@/services/aiMarket/aiMarketIntelligence";
 
 const textFields: Array<{ key: keyof CollectionCard; label: string; placeholder: string }> = [
   { key: "player", label: "Player", placeholder: "Player name" },
@@ -166,7 +167,8 @@ export default function CardDetailPage() {
     ["card number", card.cardNumber],
   ].filter(([, value]) => !value).map(([label]) => label);
 
-  const aiSummary = makeAISummary(card, marketIntel, projection, missingFields);
+  const aiMarketInsight = explainCardMarket(card, marketResult);
+  const aiSummary = aiMarketInsight.summary || makeAISummary(card, marketIntel, projection, missingFields);
 
   async function save() {
     if (!card) return;
@@ -279,10 +281,52 @@ export default function CardDetailPage() {
         <h2 className="text-lg font-black">AI Investment Summary</h2>
         <p className="mt-2 text-sm leading-6 text-cm-muted">{aiSummary}</p>
         <div className="mt-4 grid grid-cols-2 gap-3 md:grid-cols-4">
-          <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">Market Verdict</p><p className={`text-xl font-black ${marketToneClass(marketIntel.verdict)}`}>{marketIntel.verdict}</p></div>
+          <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">AI Signal</p><p className={`text-xl font-black ${marketToneClass(aiMarketInsight.buyHoldSell)}`}>{aiMarketInsight.buyHoldSell}</p></div>
           <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">Risk</p><p className={`text-xl font-black ${marketToneClass(marketIntel.risk)}`}>{marketIntel.risk}</p></div>
           <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">Liquidity</p><p className="text-xl font-black">{marketIntel.liquidityScore}/100</p></div>
           <div className="rounded-2xl bg-black/20 p-3"><p className="text-xs text-cm-muted">Confidence</p><p className={`text-xl font-black ${marketToneClass(marketIntel.confidenceLabel)}`}>{marketIntel.confidenceScore}/100</p></div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-cm-line bg-black/20 p-4">
+            <p className="text-sm font-black">Why</p>
+            <ul className="mt-2 space-y-1 text-xs text-cm-muted">
+              {aiMarketInsight.reasons.map((item) => <li key={item}>✅ {item}</li>)}
+            </ul>
+          </div>
+          <div className="rounded-2xl border border-cm-line bg-black/20 p-4">
+            <p className="text-sm font-black">Risks</p>
+            <ul className="mt-2 space-y-1 text-xs text-cm-muted">
+              {aiMarketInsight.risks.map((item) => <li key={item}>⚠️ {item}</li>)}
+            </ul>
+          </div>
+          <div className="rounded-2xl border border-cm-line bg-black/20 p-4">
+            <p className="text-sm font-black">Next Actions</p>
+            <ul className="mt-2 space-y-1 text-xs text-cm-muted">
+              {aiMarketInsight.nextActions.map((item) => <li key={item}>➡️ {item}</li>)}
+            </ul>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-cm-line bg-black/20 p-4">
+            <p className="text-sm font-black">Why</p>
+            <ul className="mt-2 space-y-1 text-xs text-cm-muted">
+              {aiMarketInsight.reasons.map((item) => <li key={item}>✅ {item}</li>)}
+            </ul>
+          </div>
+          <div className="rounded-2xl border border-cm-line bg-black/20 p-4">
+            <p className="text-sm font-black">Risks</p>
+            <ul className="mt-2 space-y-1 text-xs text-cm-muted">
+              {aiMarketInsight.risks.map((item) => <li key={item}>⚠️ {item}</li>)}
+            </ul>
+          </div>
+          <div className="rounded-2xl border border-cm-line bg-black/20 p-4">
+            <p className="text-sm font-black">Next Actions</p>
+            <ul className="mt-2 space-y-1 text-xs text-cm-muted">
+              {aiMarketInsight.nextActions.map((item) => <li key={item}>➡️ {item}</li>)}
+            </ul>
+          </div>
         </div>
       </section>
 
