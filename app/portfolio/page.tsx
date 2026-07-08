@@ -102,15 +102,6 @@ export default function PortfolioPage() {
     () => portfolioAnalytics(cards, historyByCard),
     [cards, historyByCard]
   );
-
-    () => Object.fromEntries(cards.map((card) => [card.id, getPriceHistory(card.id)])),
-    [cards]
-  );
-
-  const analytics = useMemo(
-    () => portfolioAnalytics(cards, historyByCard),
-    [cards, historyByCard]
-  );
   const invested = intelligenceTotals.invested || stats.purchaseValue || 0;
   const value = intelligenceTotals.value || stats.estimatedValue || 0;
   const max = Math.max(value, invested, 1);
