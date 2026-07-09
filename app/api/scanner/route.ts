@@ -2,7 +2,6 @@ import { NextResponse } from "next/server";
 import {
   buildScannerPrompt,
   imageToGeminiPart,
-  imageToOpenAIInput,
   normalizeScannerCard,
   parseScannerJson,
   smartFillScannerResult,
@@ -57,65 +56,8 @@ CardMania OpenAI Vision Scanner V5 instructions:
   }`;
 }
 
-async function scanWithOpenAI(payload: ScannerPayload) {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) return null;
-
-  const content: any[] = [
-    { type: "input_text", text: buildV4Prompt(payload.visibleText) },
-  ];
-
-  const front = imageToOpenAIInput(payload.image);
-  const back = imageToOpenAIInput(payload.backImage);
-  if (front) content.push(front);
-  if (back) content.push(back);
-
-  const response = await fetch("https://api.openai.com/v1/responses", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify({
-      model: process.env.OPENAI_SCANNER_MODEL || "gpt-4.1-mini",
-      input: [{ role: "user", content }],
-      temperature: 0,
-      text: { format: { type: "json_object" } },
-    }),
-  });
-
-  const data = await response.json();
-
-  if (!response.ok) {
-    return {
-      ok: false,
-      status: response.status,
-      provider: "openai",
-      message:
-        response.status === 429
-          ? "OpenAI quota or rate limit reached."
-          : data?.error?.message || "OpenAI scanner returned an error.",
-      raw: data,
-    };
-  }
-
-  const outputText =
-    data?.output_text ||
-    data?.output?.flatMap((item: any) => item?.content || [])?.find((part: any) => part?.type === "output_text")?.text ||
-    "{}";
-
-  const parsed = parseScannerJson(outputText);
-  const card = normalizeScannerCard(parsed);
-
-  return {
-    ok: true,
-    mode: "openai-vision-v5",
-    provider: "openai",
-    version: "CardMania OpenAI Vision Scanner V5",
-    card,
-    ...card,
-    raw: outputText,
-  };
+async function scanWithOpenAI(_payload: ScannerPayload) {
+  return null;
 }
 
 async function scanWithGemini(payload: ScannerPayload) {
