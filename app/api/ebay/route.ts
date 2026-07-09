@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { parsePricesFromText, scoreComparable, summarizeSales, ParsedSale } from "@/services/priceParser";
+import { getEbayAccessToken } from "@/services/ebay/oauth";
 
 function ebaySearchUrl(query: string) {
   return (
@@ -54,8 +55,13 @@ function normalizeBrowseItems(items: any[] = [], query: string): ParsedSale[] {
 }
 
 async function fetchEbayBrowseApi(query: string) {
-  const token = process.env.EBAY_BEARER_TOKEN;
-  if (!token) return { sales: [] as ParsedSale[], mode: "scrape" as const };
+  let token = "";
+
+  try {
+    token = await getEbayAccessToken();
+  } catch {
+    return { sales: [] as ParsedSale[], mode: "scrape" as const };
+  }
 
   const endpoint =
     "https://api.ebay.com/buy/browse/v1/item_summary/search?q=" +
@@ -139,14 +145,14 @@ export async function POST(req: Request) {
       if ((attempt.summary.keptCount || 0) >= 2 && attempt.summary.confidence !== "Low") {
         return NextResponse.json({
           success: true,
-          version: "Market Engine V4 exact eBay comps",
+          version: "Market Engine V5 official eBay OAuth comps",
           query: attempt.query,
           searchUrl: attempt.searchUrl,
           sourceMode: attempt.sourceMode,
           sales: attempt.sales,
           attempts,
           ...attempt.summary,
-          note: `V4 exact comps used: ${attempt.query}. ${attempt.summary.rejectedCount || 0} weak comps filtered out.`,
+          note: `V5 official eBay comps used: ${attempt.query}. ${attempt.summary.rejectedCount || 0} weak comps filtered out.`,
         });
       }
     }
@@ -159,7 +165,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      version: "Market Engine V4 exact eBay comps",
+      version: "Market Engine V5 official eBay OAuth comps",
       query: fallback.query,
       searchUrl: fallback.searchUrl,
       sourceMode: fallback.sourceMode,
@@ -168,7 +174,7 @@ export async function POST(req: Request) {
       ...fallback.summary,
       note:
         fallback.sales.length > 0
-          ? `V4 fallback used best available query: ${fallback.query}. Review comps before trusting value.`
+          ? `V5 fallback used best available query: ${fallback.query}. Review comps before trusting value.`
           : "eBay blocked server-side sold-search parsing. Open the eBay sold search link manually, or add an official eBay API token later.",
     });
   } catch (error: any) {
