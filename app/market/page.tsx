@@ -163,8 +163,7 @@ export default function MarketPage() {
       return;
     }
 
-    if (result.searchUrl) window.open(result.searchUrl, "_blank");
-    setStatus(result.note || `Opened live eBay sold search for: ${query}`);
+    setStatus(result.note || `Analyzed sold listings for: ${query}`);
   }
 
   async function refreshAllMarketValues() {
@@ -211,13 +210,12 @@ export default function MarketPage() {
     setMarketResult(result);
     setSearchingId(null);
 
-    if (!result.success || !result.searchUrl) {
-      setStatus(result.error || "Could not open live eBay search.");
+    if (!result.success) {
+      setStatus(result.error || "Could not analyze live eBay search.");
       return;
     }
 
-    window.open(result.searchUrl, "_blank");
-    setStatus(result.note || `Opened live eBay sold search for: ${manualQuery}`);
+    setStatus(result.note || `Analyzed sold listings for: ${manualQuery}`);
   }
 
   function resetMarketMemory() {
