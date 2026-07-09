@@ -28,7 +28,7 @@ function scannerJsonResponse(body: any, status = 200) {
 function buildV4Prompt(visibleText?: string) {
   return `${buildScannerPrompt(visibleText)}
 
-CardMania Real AI Card Identification V4 instructions:
+CardMania OpenAI Vision Scanner V5 instructions:
 - Identify the actual trading card, not just the visible words.
 - Prioritize player, team/club/country, manufacturer, product/set, year, card number, parallel, serial numbering, rookie status, autograph, patch/relic, and grade.
 - If the card is sports-related, infer the sport when obvious.
@@ -109,9 +109,9 @@ async function scanWithOpenAI(payload: ScannerPayload) {
 
   return {
     ok: true,
-    mode: "openai-v4",
+    mode: "openai-vision-v5",
     provider: "openai",
-    version: "CardMania Real AI Card Identification V4",
+    version: "CardMania OpenAI Vision Scanner V5",
     card,
     ...card,
     raw: outputText,
@@ -166,7 +166,7 @@ async function scanWithGemini(payload: ScannerPayload) {
     ok: true,
     mode: "gemini-v4",
     provider: "gemini",
-    version: "CardMania Real AI Card Identification V4",
+    version: "CardMania OpenAI Vision Scanner V5",
     card,
     ...card,
     raw: outputText,
@@ -190,9 +190,7 @@ export async function POST(req: Request) {
     const providers =
       providerPreference === "gemini"
         ? [scanWithGemini, scanWithOpenAI]
-        : providerPreference === "openai"
-          ? [scanWithOpenAI, scanWithGemini]
-          : [scanWithOpenAI, scanWithGemini];
+        : [scanWithOpenAI];
 
     for (const provider of providers) {
       try {
@@ -213,7 +211,7 @@ export async function POST(req: Request) {
       ...smartFillScannerResult(String(visibleText || ""), fallbackReason),
       mode: "manual-required",
       provider: "smart-fill",
-      version: "CardMania Real AI Card Identification V4 fallback",
+      version: "CardMania OpenAI Vision Scanner V5 fallback",
       errors,
     });
   } catch (error: any) {
@@ -222,7 +220,7 @@ export async function POST(req: Request) {
         ...smartFillScannerResult("", error?.message || "Scanner server error. Smart Fill remains available."),
         mode: "scanner-error",
         provider: "server",
-        version: "CardMania Real AI Card Identification V4",
+        version: "CardMania OpenAI Vision Scanner V5",
       },
       200
     );
