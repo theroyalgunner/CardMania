@@ -27,7 +27,7 @@ function scannerJsonResponse(body: any, status = 200) {
 function buildV4Prompt(visibleText?: string) {
   return `${buildScannerPrompt(visibleText)}
 
-CardMania OpenAI Vision Scanner V5 instructions:
+CardMania Gemini Vision Scanner V5 instructions:
 - Identify the actual trading card, not just the visible words.
 - Prioritize player, team/club/country, manufacturer, product/set, year, card number, parallel, serial numbering, rookie status, autograph, patch/relic, and grade.
 - If the card is sports-related, infer the sport when obvious.
@@ -54,10 +54,6 @@ CardMania OpenAI Vision Scanner V5 instructions:
     "warnings": string[],
     "missingFields": string[]
   }`;
-}
-
-async function scanWithOpenAI(_payload: ScannerPayload) {
-  return null;
 }
 
 async function scanWithGemini(payload: ScannerPayload) {
@@ -108,7 +104,7 @@ async function scanWithGemini(payload: ScannerPayload) {
     ok: true,
     mode: "gemini-v4",
     provider: "gemini",
-    version: "CardMania OpenAI Vision Scanner V5",
+    version: "CardMania Gemini Vision Scanner V5",
     card,
     ...card,
     raw: outputText,
@@ -126,13 +122,8 @@ export async function POST(req: Request) {
     }
 
     const payload: ScannerPayload = { image, backImage, mimeType, backMimeType, visibleText };
-    const providerPreference = String(process.env.SCANNER_PROVIDER || "auto").toLowerCase();
     const errors: any[] = [];
-
-    const providers =
-      providerPreference === "gemini"
-        ? [scanWithGemini, scanWithOpenAI]
-        : [scanWithOpenAI];
+    const providers = [scanWithGemini];
 
     for (const provider of providers) {
       try {
@@ -147,13 +138,13 @@ export async function POST(req: Request) {
 
     const fallbackReason = errors.length
       ? `${errors[0]?.message || "AI scanner unavailable"} Smart Fill used local text clues instead.`
-      : "No AI scanner key found. Add OPENAI_API_KEY or GEMINI_API_KEY in .env.local. Smart Fill used local text clues instead.";
+      : "No Gemini scanner key found. Add GEMINI_API_KEY in Vercel or .env.local. Smart Fill used local text clues instead.";
 
     return scannerJsonResponse({
       ...smartFillScannerResult(String(visibleText || ""), fallbackReason),
       mode: "manual-required",
       provider: "smart-fill",
-      version: "CardMania OpenAI Vision Scanner V5 fallback",
+      version: "CardMania Gemini Vision Scanner V5 fallback",
       errors,
     });
   } catch (error: any) {
@@ -162,7 +153,7 @@ export async function POST(req: Request) {
         ...smartFillScannerResult("", error?.message || "Scanner server error. Smart Fill remains available."),
         mode: "scanner-error",
         provider: "server",
-        version: "CardMania OpenAI Vision Scanner V5",
+        version: "CardMania Gemini Vision Scanner V5",
       },
       200
     );
