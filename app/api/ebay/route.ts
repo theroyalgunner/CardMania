@@ -20,12 +20,64 @@ function cleanQuery(query: string) {
     .trim();
 }
 
-function buildStrictQueries(query: string) {
-  const base = cleanQuery(query);
-  const noSerial = base.replace(/\b\d{1,4}\s*\/\s*\d{1,4}\b/g, "").replace(/\s+/g, " ").trim();
-  const noCardNumber = noSerial.replace(/\b[A-Z]{1,5}-?\d{1,5}\b/gi, "").replace(/\s+/g, " ").trim();
+function normalizeMarketQuery(query: string) {
+  return cleanQuery(query)
+    .replace(/\.(?:webp|png|jpe?g|heic)$/gi, "")
+    .replace(/\bTopps\s+Topps\b/gi, "Topps")
+    .replace(/\bAll[- ]Stars?\b/gi, "")
+    .replace(/\bUltra\s+Violet\s+Red\b/gi, "Ultra Violet")
+    .replace(/\b(?:front|back)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
 
-  return Array.from(new Set([base, noSerial, noCardNumber].filter((q) => q.length > 3)));
+function buildStrictQueries(query: string) {
+  const base = normalizeMarketQuery(query);
+
+  const noSerial = base
+    .replace(/\b\d{1,4}\s*\/\s*\d{1,5}\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const noYear = base
+    .replace(/\b(?:19|20)\d{2}(?:-\d{2})?\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const noCardNumber = base
+    .replace(/(?:#\s*)?\b[A-Z]{1,8}-\d{1,5}[A-Z]?\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const noYearOrSerial = noSerial
+    .replace(/\b(?:19|20)\d{2}(?:-\d{2})?\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const noYearOrCardNumber = noCardNumber
+    .replace(/\b(?:19|20)\d{2}(?:-\d{2})?\b/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const simplifiedParallel = base
+    .replace(/\bUltra\s+Violet\b/gi, "")
+    .replace(/\b(?:Gold|Orange|Purple|Blue|Green|Red|Black)\s+Refractor\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  return Array.from(
+    new Set(
+      [
+        base,
+        noSerial,
+        noYear,
+        noCardNumber,
+        noYearOrSerial,
+        noYearOrCardNumber,
+        simplifiedParallel,
+      ].filter((value) => value.length > 3)
+    )
+  ).slice(0, 7);
 }
 
 function normalizeBrowseItems(items: any[] = [], query: string): ParsedSale[] {
@@ -145,14 +197,14 @@ export async function POST(req: Request) {
       if ((attempt.summary.keptCount || 0) >= 2 && attempt.summary.confidence !== "Low") {
         return NextResponse.json({
           success: true,
-          version: "Market Engine V5 official eBay OAuth comps",
+          version: "Market Engine V6 ranked multi-query comps",
           query: attempt.query,
           searchUrl: attempt.searchUrl,
           sourceMode: attempt.sourceMode,
           sales: attempt.sales,
           attempts,
           ...attempt.summary,
-          note: `V5 official eBay comps used: ${attempt.query}. ${attempt.summary.rejectedCount || 0} weak comps filtered out.`,
+          note: `V6 ranked query matched: ${attempt.query}. ${attempt.summary.rejectedCount || 0} weak comps filtered out.`,
         });
       }
     }
@@ -165,7 +217,7 @@ export async function POST(req: Request) {
 
     return NextResponse.json({
       success: true,
-      version: "Market Engine V5 official eBay OAuth comps",
+      version: "Market Engine V6 ranked multi-query comps",
       query: fallback.query,
       searchUrl: fallback.searchUrl,
       sourceMode: fallback.sourceMode,
@@ -174,7 +226,7 @@ export async function POST(req: Request) {
       ...fallback.summary,
       note:
         fallback.sales.length > 0
-          ? `V5 fallback used best available query: ${fallback.query}. Review comps before trusting value.`
+          ? `V6 fallback used the strongest available query: ${fallback.query}. Review comps before trusting value.`
           : "eBay blocked server-side sold-search parsing. Open the eBay sold search link manually, or add an official eBay API token later.",
     });
   } catch (error: any) {
