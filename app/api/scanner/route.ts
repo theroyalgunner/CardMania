@@ -81,17 +81,34 @@ async function scanWithGemini(payload: ScannerPayload) {
     }
   );
 
-  const data = await response.json();
+  const rawText = await response.text();
+
+  let data: any = {};
+  try {
+    data = rawText ? JSON.parse(rawText) : {};
+  } catch {
+    data = { rawText };
+  }
+
+  console.error("Gemini scanner response:", {
+    status: response.status,
+    statusText: response.statusText,
+    model: process.env.GEMINI_SCANNER_MODEL || "gemini-2.0-flash",
+    error: data?.error || data,
+  });
 
   if (!response.ok) {
+    const googleMessage =
+      data?.error?.message ||
+      data?.error?.status ||
+      response.statusText ||
+      "Gemini scanner returned an error.";
+
     return {
       ok: false,
       status: response.status,
       provider: "gemini",
-      message:
-        response.status === 429
-          ? "Gemini quota or rate limit reached."
-          : data?.error?.message || "Gemini scanner returned an error.",
+      message: `Gemini error ${response.status}: ${googleMessage}`,
       raw: data,
     };
   }
